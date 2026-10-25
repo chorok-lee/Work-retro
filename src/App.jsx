@@ -469,18 +469,21 @@ export default function App(){
   const dayLabel=selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`;
   const thisWeekLessons=lessons.filter(l=>l.date>=toISO(curMon)&&l.date<=today);
 
-  /* 할 일·레슨런 탭이 함께 쓰는 날짜 이동 */
+  /* 오늘·레슨런 탭이 함께 쓰는 날짜 머리말 — 일지 한 장의 날짜 칸 */
   const dateStepper=(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,margin:"8px 0 12px"}}>
-      <button className="btn icon" aria-label="이전 날" onClick={()=>setSelDate(prevWorkday(selDate))}>‹</button>
-      <div style={{textAlign:"center"}}>
-        <div style={{fontSize:16,fontWeight:700}}>{selD.getMonth()+1}월 {selD.getDate()}일 ({wdOf(selDate)})</div>
-        <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>
-          {selWk.m}월 {selWk.w}주차{selDate!==workToday&&<> · <button className="link" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘로":"최근 평일로"}</button></>}
+    <div className="pagehead">
+      <div style={{minWidth:0}}>
+        <h2 className="date">{selD.getMonth()+1}월 {selD.getDate()}일</h2>
+        <div className="meta">
+          <span>{wdOf(selDate)}요일, {selWk.m}월 {selWk.w}주차</span>
+          {selDate!==workToday&&<button className="link" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘로":"최근 평일로"}</button>}
         </div>
       </div>
-      <button className="btn icon" aria-label="다음 날" disabled={nextWorkday(selDate)>today}
-        onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}>›</button>
+      <div className="steps">
+        <button className="btn icon" aria-label="이전 평일" onClick={()=>setSelDate(prevWorkday(selDate))}>‹</button>
+        <button className="btn icon" aria-label="다음 평일" disabled={nextWorkday(selDate)>today}
+          onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}>›</button>
+      </div>
     </div>
   );
 
@@ -490,8 +493,8 @@ export default function App(){
       <div className="wrap">
         <header className="navbar">
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <h1 style={{fontSize:17,fontWeight:700,margin:0,letterSpacing:"-0.01em"}}>업무 회고</h1>
-            <div role="tablist" className="seg">
+            <h1 className="brand">업무 회고</h1>
+            <div role="tablist" className="tabs">
               {[["todo","오늘"],["lessons","레슨런"],["review","회고"]].map(([k,l])=>(
                 <button key={k} role="tab" aria-selected={tab===k} className={"btn"+(tab===k?" on":"")} onClick={()=>setTab(k)}>{l}</button>
               ))}
@@ -517,26 +520,26 @@ export default function App(){
             {list.length>0&&<>
               <div className="sec">
                 <span>매일 루틴</span>
-                <span className="mono"><b style={{color:"var(--ink)"}}>{dayDone}</b> / {list.length}
+                <span className="sec-side">
+                  <span className="mono"><b>{dayDone}</b> / {list.length}</span>
                   {/* 루틴 추가·수정은 노션 DB에서 */}
-                  {itemsDb&&<> · <a className="link" style={{padding:0,fontSize:13}} href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`}
-                    target="_blank" rel="noopener noreferrer">관리하기</a></>}</span>
+                  {itemsDb&&<a className="link" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`}
+                    target="_blank" rel="noopener noreferrer">관리하기</a>}
+                </span>
               </div>
-              <div className="card" style={{padding:4}}>
-                <div className="bar" style={{height:3,margin:"6px 12px 2px"}}><div style={{width:`${dayDone/list.length*100}%`}}/></div>
+              <div className="list">
                 {list.map((h,i)=>{
                   const on=isLogged(h.id,selDate),wc=weekCount(h.id),t=tgtOf(h);
                   return(
                     <div key={h.id} className="row" role="checkbox" aria-checked={on} tabIndex={0}
                       onClick={()=>toggleLog(h.id,selDate)}
-                      onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();toggleLog(h.id,selDate);}}}
-                      style={{borderTop:i?"1px solid var(--line)":"none"}}>
-                      <span className={"chk"+(on?" on":"")} aria-hidden="true">{on?"✓":""}</span>
+                      onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();toggleLog(h.id,selDate);}}}>
+                      <Check on={on}/>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:15,fontWeight:500,wordBreak:"keep-all"}}>{h.name}</div>
-                        <div className="mono" style={{fontSize:12,color:"var(--sub)",marginTop:2}}>{freqLabel(h)}</div>
+                        <div className="row-title"><span className={on?"hl":undefined}>{h.name}</span></div>
+                        <div className="row-meta">{freqLabel(h)}</div>
                       </div>
-                      <span className="mono" style={{fontSize:13,fontWeight:600,color:wc>=t?"var(--acc)":"var(--sub)"}}>{Math.min(wc,t)}/{t}</span>
+                      <Tally n={wc} of={t}/>
                     </div>
                   );
                 })}
@@ -555,26 +558,28 @@ export default function App(){
         )}
 
         {!booting&&tab==="review"&&(
-          <div className="fade">
+          <div className="fade" style={{paddingTop:14}}>
             <PaceCard p={paceOf(list)}/>
             <RatingTrend ratings={ratings} today={today}/>
             <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
-                <span style={{color:"var(--sub)"}}>이번 주 레슨런</span>
-                <span className="mono" style={{color:"var(--sub)"}}>{thisWeekLessons.length}개</span>
+              <div className="panel-head">
+                <span>이번 주 레슨런</span>
+                <span className="mono">{thisWeekLessons.length}개</span>
               </div>
               {thisWeekLessons.length===0
-                ? <div style={{fontSize:13,color:"var(--sub)",marginTop:8}}>아직 없어요. 레슨런 탭에서 남길 수 있어요.</div>
+                ? <div style={{fontSize:14,color:"var(--sub)",marginTop:8}}>아직 없어요. 레슨런 탭에서 남길 수 있어요.</div>
                 : <ul className="lessons-mini">
                     {thisWeekLessons.map(l=><li key={l.id}><span className="mono">{wdOf(l.date)}</span>{l.text}</li>)}
                   </ul>}
             </div>
-            {list.length>0&&
-              <div className="card" style={{padding:4}}>
+            {list.length>0&&<>
+              <div className="sec"><span>루틴별 기록</span><span className="sec-side">최근 3주</span></div>
+              <div className="list">
                 {list.map((h,i)=>(
                   <ItemRow key={h.id} st={itemStats(h)} today={today} first={i===0} onOpen={()=>openDetail(h.id)}/>
                 ))}
-              </div>}
+              </div>
+            </>}
           </div>
         )}
       </div>
@@ -589,9 +594,9 @@ export default function App(){
 function LoadingView(){
   return(
     <div className="fade" role="status" aria-label="불러오는 중">
-      <div className="sk" style={{height:44,margin:"8px 0 12px"}}/>
-      <div className="sk" style={{height:66,marginBottom:12}}/>
-      <div className="sk" style={{height:280}}/>
+      <div className="sk" style={{height:40,width:"46%",margin:"18px 0 8px"}}/>
+      <div className="sk" style={{height:16,width:"34%",marginBottom:28}}/>
+      <div className="sk" style={{height:220}}/>
     </div>
   );
 }
@@ -607,7 +612,6 @@ function PaceCard({p}){
   const max=Math.max(prev[last],now,1);
   const X=(i)=>PX+(W-PX*2)*i/last, Y=(v)=>PT+(H-PT-PB)*(1-v/max);
   const pts=(arr,n)=>arr.slice(0,n).map((v,i)=>`${X(i)},${Y(v)}`).join(" ");
-  const big=diff>0?`+${diff}`:`${diff}`;
   const label=diff>0?`지난주 ${DAYS[todayIdx]}요일까지보다 ${diff}회 많아요`
     :diff===0?`지난주 ${DAYS[todayIdx]}요일까지와 같아요`:`지난주 ${DAYS[todayIdx]}요일까지보다 ${-diff}회 적어요`;
   const wk=bestMon&&weekOfMonth(bestMon);
@@ -615,13 +619,9 @@ function PaceCard({p}){
     setHi(Math.max(0,Math.min(last,Math.round((x-PX)/((W-PX*2)/last)))));};
 
   return(
-    <div className="card" style={{padding:"18px 16px",marginBottom:12}}>
-      <div style={{fontSize:13,color:"var(--sub)"}}>이번 주 누적 체크</div>
-      <div style={{display:"flex",alignItems:"baseline",gap:10,marginTop:6}}>
-        <span className="mono" style={{fontSize:32,fontWeight:700,letterSpacing:"-0.02em",lineHeight:1}}>{now}회</span>
-        <span className="mono" style={{fontSize:14,fontWeight:600,color:diff>0?"var(--acc)":diff<0?"var(--neg)":"var(--sub)"}}>{diff===0?"±0":big}</span>
-      </div>
-      <div style={{fontSize:13,color:"var(--sub)",marginTop:6}}>{label}</div>
+    <div className="card" style={{padding:"20px 18px",marginBottom:12}}>
+      <p className="lead">이번 주 루틴을 {now}회 체크했어요</p>
+      <div style={{fontSize:14,color:"var(--sub)",marginTop:6}}>{label}</div>
 
       <div style={{position:"relative",marginTop:16}} onPointerMove={pick} onPointerDown={pick}
         onPointerLeave={e=>{if(e.pointerType==="mouse")setHi(null);}}>
@@ -654,7 +654,7 @@ function PaceCard({p}){
 
       <div className="kv" style={{marginTop:16}}>
         <div><span>현재 페이스로 목표 달성</span><b className="mono">{onTrack}/{total}개</b></div>
-        {best>0&&<div><span>최고 기록 주</span><b className="mono">{now>best?"이번 주":`${wk.m}월 ${wk.w}주차`} · {Math.max(best,now)}회</b></div>}
+        {best>0&&<div><span>최고 기록 주</span><b className="mono">{now>best?"이번 주":`${wk.m}월 ${wk.w}주차`}, {Math.max(best,now)}회</b></div>}
       </div>
     </div>
   );
@@ -694,11 +694,12 @@ function ItemRow({st,today,first,onOpen}){
   const weeks=[0,1,2].map(i=>weekDatesFrom(addDays(mon0,i*7)));
   return(
     <button className="btn row" onClick={onOpen} aria-label={`${st.h.name} 자세히 보기`}
-      style={{width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:first?"none":"1px solid var(--line)",color:"inherit"}}>
+      style={{width:"100%",textAlign:"left",background:"transparent",border:"none",color:"inherit"}}>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:15,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
-        <div className="mono" style={{fontSize:12,marginTop:3,color:"var(--sub)"}}>
-          이번 주 {Math.min(st.wc,st.t)}/{st.t}{st.cur>0&&<> · <span style={{color:"var(--acc)",fontWeight:600}}>{st.cur}{st.unit} 연속</span></>}
+        <div className="row-title" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
+        <div className="row-meta">
+          <span>이번 주 {Math.min(st.wc,st.t)}/{st.t}</span>
+          {st.cur>0&&<span style={{color:"var(--acc)",fontWeight:600,marginLeft:8}}>{st.cur}{st.unit} 연속</span>}
         </div>
       </div>
       <div aria-hidden="true" style={{display:"grid",gridTemplateColumns:`repeat(${DAYS.length},11px)`,gap:3,flex:"0 0 auto"}}>
@@ -725,7 +726,7 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   const tile=(label,big,foot,extra)=>(
     <div className="card" style={{padding:"14px 16px",display:"flex",flexDirection:"column",minHeight:112}}>
       <div style={{fontSize:12,color:"var(--sub)"}}>{label}</div>
-      <div className="mono" style={{fontSize:26,fontWeight:700,letterSpacing:"-0.02em",margin:"auto 0 4px"}}>{big}</div>
+      <div className="mono" style={{fontSize:26,fontWeight:600,letterSpacing:"-0.01em",margin:"auto 0 4px"}}>{big}</div>
       {extra}
       <div style={{fontSize:12,color:"var(--sub)"}}>{foot}</div>
     </div>
@@ -736,7 +737,7 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
         <div style={{display:"grid",gridTemplateColumns:"36px 1fr 36px",alignItems:"center",gap:12,marginBottom:16}}>
           <button className="btn icon" onClick={onClose} aria-label="뒤로">‹</button>
           <div style={{textAlign:"center",minWidth:0}}>
-            <div style={{fontSize:16,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
+            <div style={{fontFamily:"var(--serif)",fontSize:19,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
             <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>{freqLabel(st.h)}</div>
           </div>
           {isNotion
@@ -797,7 +798,20 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
 }
 
 /* ── 오늘 할 일 ── 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래 줄에서 새로 추가 */
-const PRI_COLOR={핵심:"var(--neg)",높음:"var(--acc)"};
+const PRI_COLOR={핵심:"var(--neg)",높음:"var(--ink)"};
+
+/* 체크 칸 — 잉크로 채운 네모 */
+function Check({on}){
+  return <span className={"chk"+(on?" on":"")} aria-hidden="true">
+    {on&&<svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 6.2 5 8.6 9.6 3.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+  </span>;
+}
+/* 이번 주 집계 칸 — 목표 횟수만큼 칸, 체크한 만큼 채움 */
+function Tally({n,of}){
+  return <span className="tally" role="img" aria-label={`이번 주 ${Math.min(n,of)}/${of}`}>
+    {Array.from({length:of},(_,i)=><i key={i} className={i<n?"on":undefined}/>)}
+  </span>;
+}
 function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
   const [draft,setDraft]=useState("");
   const [edit,setEdit]=useState(null);   // { id, text }
@@ -810,29 +824,28 @@ function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
   };
   const done=tasks.filter(t=>t.done).length;
   return(<>
-    <div className="sec" style={{marginTop:4}}>
+    <div className="sec">
       <span>{title}</span>
-      {tasks.length>0&&<span className="mono"><b style={{color:"var(--ink)"}}>{done}</b> / {tasks.length}</span>}
+      {tasks.length>0&&<span className="sec-side"><span className="mono"><b>{done}</b> / {tasks.length}</span></span>}
     </div>
-    <div className="card" style={{padding:4,marginBottom:4}}>
-      {err&&<div className="notice" style={{margin:8}}>{err}</div>}
+    <div className="list">
+      {err&&<div className="notice" style={{margin:"10px 0"}}>{err}</div>}
       {tasks.map((t,i)=>(
-        <div key={t.id} className="row" style={{borderTop:i?"1px solid var(--line)":"none",cursor:"default"}}>
-          <span className={"chk"+(t.done?" on":"")} role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0}
-            style={{cursor:"pointer"}} onClick={()=>onToggle(t)}
-            onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}>{t.done?"✓":""}</span>
+        <div key={t.id} className="row" style={{cursor:"default"}}>
+          <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="chk-hit"
+            onClick={()=>onToggle(t)}
+            onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}><Check on={t.done}/></span>
           {edit?.id===t.id
             ? <input className="task-in" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
                 onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
                 onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
-            : <button className="btn task-title" onClick={()=>setEdit({id:t.id,text:t.title})}
-                style={{textDecoration:t.done?"line-through":"none",color:t.done?"var(--sub)":"var(--ink)"}}>{t.title}</button>}
+            : <button className="btn task-title" onClick={()=>setEdit({id:t.id,text:t.title})}><span className={t.done?"hl":undefined}>{t.title}</span></button>}
           {t.priority&&<span className="pri" style={{color:PRI_COLOR[t.priority]||"var(--sub)"}}>{t.priority}</span>}
         </div>
       ))}
-      <div className="row" style={{borderTop:tasks.length||err?"1px solid var(--line)":"none",cursor:"text"}}>
-        <span aria-hidden="true" style={{width:22,textAlign:"center",color:"var(--sub)",fontSize:18,lineHeight:1}}>+</span>
-        <input className="task-in" value={draft} maxLength={200} placeholder={tasks.length?"할 일 추가":"마감일이 이날인 할 일이 없어요 · 여기에 추가"}
+      <div className="row add-row" style={{cursor:"text"}}>
+        <span aria-hidden="true" className="plus">+</span>
+        <input className="task-in" value={draft} maxLength={200} placeholder={tasks.length?"할 일 추가":"이날 마감인 할 일이 없어요. 여기에 추가하세요"}
           aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
         {draft.trim()&&<button className="btn primary" onClick={add}>추가</button>}
@@ -844,27 +857,31 @@ function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
 /* ── 하루 평가 ── 접힌 상태: 박스 버튼 / 펼친 상태: 별 5개 */
 function RatingCard({score,open,onToggle,onRate}){
   return(
-    <div className="card" style={{marginBottom:12,overflow:"hidden"}}>
+    <div className="card rate" style={{marginBottom:12,overflow:"hidden"}}>
       <button className="btn rate-head" onClick={onToggle} aria-expanded={open}>
-        <span style={{fontWeight:600}}>하루 평가하기</span>
+        <span>하루 평가하기</span>
         <span style={{display:"flex",alignItems:"center",gap:8}}>
           {!open&&score>0&&<Stars n={score} size={13}/>}
           <span aria-hidden="true" style={{color:"var(--sub)",transform:open?"rotate(90deg)":"none",transition:"transform .15s"}}>›</span>
         </span>
       </button>
       {open&&
-        <div role="radiogroup" aria-label="하루 평가" className="fade" style={{padding:"0 16px 16px",display:"flex",justifyContent:"center",gap:4}}>
+        <div role="radiogroup" aria-label="하루 평가" className="fade" style={{padding:"2px 12px 16px",display:"flex",gap:2}}>
           {[1,2,3,4,5].map(n=>(
             <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
-              onClick={()=>onRate(n)}>★</button>
+              onClick={()=>onRate(n)}><StarSvg size={34}/></button>
           ))}
         </div>}
     </div>
   );
 }
+const STAR="M12 2.8l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.6l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z";
+function StarSvg({size=20}){
+  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={STAR} strokeWidth="1.3" strokeLinejoin="round"/></svg>;
+}
 function Stars({n,size=13}){
-  return <span className="mono" style={{fontSize:size,letterSpacing:1}} aria-label={`${n}점`}>
-    <span style={{color:"var(--acc)"}}>{"★".repeat(n)}</span><span style={{color:"var(--cell)"}}>{"★".repeat(5-n)}</span></span>;
+  return <span className="stars" role="img" aria-label={`${n}점`}>
+    {[1,2,3,4,5].map(i=><span key={i} className={i<=n?"on":undefined}><StarSvg size={size}/></span>)}</span>;
 }
 
 /* ── 하루 평점 추이 ── 최근 4주 평일 막대 (높이 = 점수) + 주간 평균 */
@@ -877,15 +894,15 @@ function RatingTrend({ratings,today}){
   const W=560,H=64,G=18,BW=(W-G*3)/20-6;
   return(
     <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
-        <span style={{color:"var(--sub)"}}>하루 평점 추이</span>
-        <span className="mono"><span style={{color:"var(--sub)"}}>이번 주 </span><b>{f(cur)}</b><span style={{color:"var(--sub)"}}> · 지난주 {f(prev)}</span></span>
+      <div className="panel-head">
+        <span>하루 평점 추이</span>
+        <span className="mono">평균 이번 주 <b>{f(cur)}</b>, 지난주 {f(prev)}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",marginTop:12}} aria-hidden="true">
         {weeks.map((ds,wi)=>ds.map((d,di)=>{
           const x=wi*((W-G*3)/4+G)+di*((W-G*3)/20)+3, v=ratings[d]||0, h=v?Math.max(4,(H-2)*v/5):3;
           return <rect key={d} x={x} y={H-h} width={BW} height={h} rx="2"
-            fill={d>today?"transparent":v?"var(--acc)":"var(--cell)"} opacity={v?.35+v*.13:1}><title>{`${d} ${v?v+"점":"기록 없음"}`}</title></rect>;
+            fill={d>today?"transparent":v?"var(--acc)":"var(--cell)"} opacity={v?.4+v*.12:1}><title>{`${d} ${v?v+"점":"기록 없음"}`}</title></rect>;
         }))}
       </svg>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",columnGap:G/W*100+"%",marginTop:6,fontSize:11,color:"var(--sub)"}}>
@@ -923,29 +940,29 @@ function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDel
   return(
     <div className="fade">
       {dateStepper}
-      <div className="card" style={{padding:"10px 14px 12px",marginBottom:12}}>
+      <div className="card" style={{padding:"12px 14px",margin:"22px 0 8px"}}>
         <textarea className="ta" rows={3} maxLength={500} value={draft} onChange={e=>setDraft(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}}}
           placeholder="배운 점, 다음에 다르게 할 점을 한 줄로" aria-label="레슨런 내용"/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
-          <span style={{fontSize:12,color:"var(--sub)"}}>{dayLabel} 레슨런으로 저장</span>
+          <span style={{fontSize:13,color:"var(--sub)"}}>{dayLabel} 레슨런으로 저장</span>
           <button className="btn primary" disabled={!draft.trim()||saving} onClick={save}>{saving?"저장 중…":"저장"}</button>
         </div>
       </div>
       {note&&<div className="notice" style={{marginTop:0,marginBottom:12}}>{note}</div>}
       {groups.length===0
-        ? <div style={{fontSize:13,color:"var(--sub)",textAlign:"center",padding:"24px 0"}}>아직 레슨런이 없어요</div>
+        ? <div style={{fontSize:14,color:"var(--sub)",padding:"20px 0"}}>아직 레슨런이 없어요. 오늘 배운 점을 한 줄로 남겨 보세요.</div>
         : groups.map(g=>{const wk=weekOfMonth(g.k);return(
-            <div key={g.k} style={{marginBottom:16}}>
-              <div style={{display:"flex",justifyContent:"space-between",margin:"0 2px 6px",fontSize:12,color:"var(--sub)"}}>
-                <span>{g.k===curK?"이번 주":`${wk.m}월 ${wk.w}주차`}</span><span className="mono">{g.items.length}개</span>
+            <div key={g.k}>
+              <div className="sec">
+                <span>{g.k===curK?"이번 주":`${wk.m}월 ${wk.w}주차`}</span><span className="sec-side mono">{g.items.length}개</span>
               </div>
-              <div className="card" style={{padding:"0 4px 0 16px"}}>
+              <div className="list">
                 {g.items.map((l,i)=>{const d=fromISO(l.date);return(
-                  <div key={l.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"10px 0",borderTop:i?"1px solid var(--line)":"none"}}>
+                  <div key={l.id} className="lesson">
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:14,lineHeight:1.55,whiteSpace:"pre-wrap",wordBreak:"keep-all"}}>{l.text}</div>
-                      <div className="mono" style={{fontSize:12,color:"var(--sub)",marginTop:3}}>{d.getMonth()+1}월 {d.getDate()}일 ({wdOf(l.date)})</div>
+                      <div className="lesson-text">{l.text}</div>
+                      <div className="row-meta">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
                     </div>
                     <div style={{position:"relative",flex:"0 0 auto"}}>
                       <button className="btn more" aria-label="더보기" aria-haspopup="menu" aria-expanded={menu===l.id}
@@ -963,79 +980,131 @@ function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDel
 }
 
 const CSS=`
-  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@600&display=swap');
+  /* 형광펜 업무 일지 — 회녹색 종이, 잉크, 완료한 줄에만 형광펜. 데이터는 올리브 */
   :root{
-    --bg:#F6F7F9;--surface:#FFFFFF;--ink:#16181D;--sub:#6B7280;--line:#E7E9EE;
-    --acc:#2F6FEB;--acc-rgb:47,111,235;--on-acc:#FFFFFF;--neg:#C2410C;
-    --cell:#ECEEF2;--cell-pre:#F4F5F7;--notice-bg:#FFF7E6;--notice-ink:#8A5A00;
+    --bg:#F2F3EE;--surface:#FBFBF8;--ink:#1D2420;--sub:#6B736D;--line:#DADDD4;
+    --acc:#556B10;--acc-rgb:85,107,16;--on-acc:#FBFBF8;--neg:#B5462F;
+    --hl:#E5F36B;
+    --cell:#E3E6DC;--cell-pre:#ECEDE7;--notice-bg:#F4ECCF;--notice-ink:#6A5110;
+    --serif:'Noto Serif KR',ui-serif,serif;--sans:'IBM Plex Sans KR',ui-sans-serif,system-ui,sans-serif;
     color-scheme:light;
   }
   @media(prefers-color-scheme:dark){:root{
-    --bg:#0F1115;--surface:#171A21;--ink:#E7E9EE;--sub:#9097A3;--line:#262A33;
-    --acc:#5B8DEF;--acc-rgb:91,141,239;--on-acc:#0B1020;--neg:#F0915A;
-    --cell:#222630;--cell-pre:#1A1D24;--notice-bg:#2A2313;--notice-ink:#E8C879;
+    --bg:#151916;--surface:#1C211D;--ink:#E3E7E0;--sub:#9AA39C;--line:#2E3530;
+    --acc:#B4CC50;--acc-rgb:180,204,80;--on-acc:#151916;--neg:#E08A70;
+    --hl:rgba(200,219,69,.42);
+    --cell:#272D28;--cell-pre:#1F2520;--notice-bg:#2C2816;--notice-ink:#E3CF85;
     color-scheme:dark;
   }}
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);max-width:100%;overflow-x:clip}
-  .app{min-height:100vh;color:var(--ink);font-family:'Pretendard',ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .app{min-height:100vh;color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
   .mono{font-variant-numeric:tabular-nums}
-  button,input,select{font-family:inherit}
-  .wrap{max-width:560px;margin:0 auto;padding:0 16px 64px}
-  .navbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:14px 0 12px;margin-bottom:4px}
-  .notice{margin-top:10px;background:var(--notice-bg);color:var(--notice-ink);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.55}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px}
-  .btn{cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,opacity .15s}
-  .btn:disabled{opacity:.35;cursor:default}
-  .btn.icon{width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--line);
-    border-radius:10px;background:var(--surface);color:var(--ink);font-size:18px;line-height:1;text-decoration:none}
-  .btn.primary{background:var(--acc);color:var(--on-acc);border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600}
-  .ta{width:100%;resize:none;line-height:1.6;font-size:15px;border:none;background:transparent;padding:4px 2px}
-  .lessons-mini{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
-  .lessons-mini li{display:flex;gap:10px;font-size:14px;line-height:1.5;word-break:keep-all;white-space:pre-wrap}
-  .lessons-mini li span{color:var(--sub);font-size:12px;flex:0 0 auto;padding-top:2px}
-  .rate-head{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;padding:14px 16px;
-    background:none;border:none;color:var(--ink);font-size:14px;text-align:left}
-  .btn.star{border:none;background:none;padding:2px 4px;font-size:34px;line-height:1;color:var(--cell);transition:color .12s,transform .12s}
-  .btn.star.on{color:var(--acc)}
-  .btn.star:active{transform:scale(.9)}
-  .sec{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--sub);margin:20px 2px 8px}
-  .sec>span:first-child{font-weight:600;color:var(--ink)}
+  button,input,select,textarea{font-family:inherit;color:inherit}
+  .wrap{max-width:560px;margin:0 auto;padding:0 20px 72px}
+
+  /* 머리 — 이름은 조용히, 선택한 탭에만 형광펜 */
+  .navbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:14px 0 10px}
+  .brand{font-size:15px;font-weight:600;margin:0}
+  .tabs{display:flex;gap:20px}
+  .tabs .btn{position:relative;isolation:isolate;background:none;border:none;padding:6px 1px;font-size:15px;font-weight:500;color:var(--sub)}
+  .tabs .btn.on{color:var(--ink);font-weight:600}
+  .tabs .btn.on::after{content:"";position:absolute;left:-3px;right:-3px;top:46%;bottom:16%;background:var(--hl);z-index:-1;border-radius:1px}
+
+  /* 날짜 머리말 */
+  .pagehead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:14px 0 4px}
+  .date{font-family:var(--serif);font-weight:600;font-size:34px;line-height:1.15;letter-spacing:-0.01em;margin:0}
+  .meta{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:14px;color:var(--sub)}
+  .steps{display:flex;gap:6px;padding-bottom:4px}
+
+  /* 구역 제목 + 잉크 괘선 아래 목록 */
+  .sec{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:30px 0 0;padding-bottom:8px;border-bottom:1.5px solid var(--ink)}
+  .sec>span:first-child{font-size:15px;font-weight:600}
+  .sec-side{display:flex;align-items:baseline;gap:12px;font-size:13px;color:var(--sub)}
+  .sec-side b{color:var(--ink);font-weight:600}
+  .list>*{border-bottom:1px solid var(--line)}
+  .row{display:flex;align-items:center;gap:14px;padding:13px 2px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;font-family:inherit}
+  .row:hover{background:rgba(var(--acc-rgb),.05)}
+  .row-title{font-size:15px;font-weight:500;word-break:keep-all}
+  .row-meta{font-size:13px;color:var(--sub);margin-top:2px;font-variant-numeric:tabular-nums}
+  .btn.row{font-size:inherit}
+
+  /* 형광펜 — 완료하면 왼쪽에서 오른쪽으로 그어짐 */
+  .hl{background:linear-gradient(transparent 42%,var(--hl) 42%,var(--hl) 94%,transparent 94%) no-repeat 0 0/100% 100%;
+    -webkit-box-decoration-break:clone;box-decoration-break:clone;padding:0 2px;margin:0 -2px;animation:swipe .32s cubic-bezier(.3,.7,.3,1)}
+  @keyframes swipe{from{background-size:0 100%}}
+
+  .chk{width:20px;height:20px;border-radius:4px;flex:0 0 auto;border:1.5px solid var(--ink);display:flex;align-items:center;justify-content:center;
+    color:var(--bg);transition:background .12s}
+  .chk.on{background:var(--ink)}
+  .chk-hit{display:flex;padding:4px;margin:-4px;cursor:pointer;border-radius:6px}
+  .tally{display:flex;gap:3px;flex:0 0 auto}
+  .tally i{width:7px;height:16px;border-radius:1.5px;background:var(--cell)}
+  .tally i.on{background:var(--acc)}
+
   .task-title{flex:1;min-width:0;text-align:left;background:none;border:none;padding:0;font-size:15px;font-weight:500;word-break:keep-all;cursor:text}
   .task-in{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--ink);font-size:15px;padding:2px 0}
   .task-in::placeholder{color:var(--sub)}
-  .pri{font-size:11px;font-weight:600;flex:0 0 auto}
-  .btn.more{border:none;background:none;color:var(--sub);font-size:20px;line-height:1;width:32px;height:32px;border-radius:8px;letter-spacing:1px}
+  .plus{width:20px;text-align:center;color:var(--sub);font-size:20px;line-height:1;flex:0 0 auto}
+  .pri{font-size:12px;font-weight:600;flex:0 0 auto}
+
+  /* 상자 — 따로 하는 행동(평가·쓰기)과 회고 묶음에만 */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:6px}
+  .panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px;color:var(--sub)}
+  .panel-head>span:first-child{font-size:15px;font-weight:600;color:var(--ink)}
+  .panel-head b{color:var(--ink);font-weight:600}
+  .lead{font-family:var(--serif);font-weight:600;font-size:22px;line-height:1.4;margin:0;word-break:keep-all}
+
+  .rate{margin-top:24px}
+  .rate-head{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;padding:15px 16px;
+    background:none;border:none;color:var(--ink);font-size:15px;font-weight:600;text-align:left}
+  .btn.star{border:none;background:none;padding:4px;line-height:0;border-radius:6px}
+  .btn.star path,.stars path{fill:none;stroke:var(--sub)}
+  .btn.star.on path,.stars .on path{fill:var(--hl);stroke:var(--ink)}
+  .btn.star:active svg{transform:scale(.9)}
+  .stars{display:inline-flex;gap:1px;line-height:0}
+
+  .lesson{display:flex;align-items:flex-start;gap:8px;padding:13px 0 13px 2px}
+  .lesson-text{font-size:15px;line-height:1.6;white-space:pre-wrap;word-break:keep-all}
+  .lessons-mini{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .lessons-mini li{display:flex;gap:12px;font-size:15px;line-height:1.55;word-break:keep-all;white-space:pre-wrap}
+  .lessons-mini li span{color:var(--sub);font-size:13px;flex:0 0 auto;padding-top:2px}
+  .ta{width:100%;resize:none;line-height:1.6;font-size:15px;border:none;outline:none;background:transparent;padding:2px 0}
+  .ta::placeholder{color:var(--sub)}
+
+  .btn{cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,opacity .15s}
+  .btn:disabled{opacity:.3;cursor:default}
+  .btn.icon{width:34px;height:34px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--line);
+    border-radius:6px;background:transparent;color:var(--ink);font-size:18px;line-height:1;text-decoration:none}
+  .btn.icon:hover:not(:disabled){background:var(--surface)}
+  .btn.primary{background:var(--ink);color:var(--bg);border:none;border-radius:6px;padding:8px 14px;font-size:14px;font-weight:600}
+  .btn.more{border:none;background:none;color:var(--sub);font-size:20px;line-height:1;width:32px;height:32px;border-radius:6px;letter-spacing:1px}
   .btn.more:hover,.btn.more[aria-expanded=true]{background:var(--cell)}
-  .menu{position:absolute;right:0;top:34px;z-index:5;min-width:96px;background:var(--surface);border:1px solid var(--line);border-radius:10px;
-    padding:4px;box-shadow:0 6px 20px rgba(0,0,0,.12)}
-  .menu .btn{display:block;width:100%;text-align:left;border:none;background:none;color:var(--neg);font-size:14px;padding:8px 10px;border-radius:6px}
+  .menu{position:absolute;right:0;top:34px;z-index:5;min-width:96px;background:var(--surface);border:1px solid var(--line);border-radius:6px;
+    padding:4px;box-shadow:0 8px 24px rgba(29,36,32,.14)}
+  .menu .btn{display:block;width:100%;text-align:left;border:none;background:none;color:var(--neg);font-size:14px;padding:8px 10px;border-radius:4px}
   .menu .btn:hover{background:var(--cell)}
-  .link{background:none;border:none;padding:4px;color:var(--sub);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
-  .seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--cell)}
-  .seg .btn{border:none;background:transparent;color:var(--sub);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:600}
-  .seg .btn.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-  .row{display:flex;align-items:center;gap:12px;padding:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;font-family:inherit}
-  .row:hover{background:rgba(var(--acc-rgb),.04)}
-  .row:focus-visible,.btn:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
-  .chk{width:22px;height:22px;border-radius:6px;flex:0 0 auto;border:1.5px solid var(--sub);display:flex;align-items:center;
-    justify-content:center;color:var(--on-acc);font-size:13px;font-weight:700;transition:background .12s,border-color .12s}
-  .chk.on{background:var(--acc);border-color:var(--acc)}
-  .bar{height:6px;border-radius:3px;background:var(--cell);overflow:hidden}
-  .bar>div{height:100%;background:var(--acc);border-radius:3px;transition:width .3s ease}
+  .link{background:none;border:none;padding:0;color:var(--acc);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+  .row:focus-visible,.btn:focus-visible,.chk-hit:focus-visible,.link:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+  .notice{margin-top:10px;background:var(--notice-bg);color:var(--notice-ink);border-radius:6px;padding:12px 14px;font-size:14px;line-height:1.55}
+  .bar{height:5px;border-radius:2px;background:var(--cell);overflow:hidden}
+  .bar>div{height:100%;background:var(--acc);transition:width .3s ease}
   .kv{display:flex;flex-direction:column;border-top:1px solid var(--line)}
-  .kv>div{display:flex;justify-content:space-between;gap:12px;padding:10px 0 0;font-size:13px}
+  .kv>div{display:flex;justify-content:space-between;gap:12px;padding:10px 0 0;font-size:14px}
   .kv span{color:var(--sub)}
+  .kv b{font-weight:600}
   .lg{display:inline-block;width:14px;height:2px;border-radius:1px}
   .lg.dash{background:repeating-linear-gradient(90deg,var(--sub) 0 4px,transparent 4px 7px)}
   .tip{position:absolute;top:0;z-index:2;pointer-events:none;white-space:nowrap;background:var(--surface);border:1px solid var(--line);
-    border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+    border-radius:6px;padding:8px 10px;font-size:13px;line-height:1.6;box-shadow:0 6px 18px rgba(29,36,32,.12)}
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg)}
   .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
-    background:var(--ink);color:var(--bg);border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.5}
-  .sk{border-radius:12px;background:var(--cell);animation:sk 1.4s ease-in-out infinite}
+    background:var(--ink);color:var(--bg);border-radius:6px;padding:10px 14px;font-size:14px;line-height:1.5}
+  .sk{border-radius:4px;background:var(--cell);animation:sk 1.4s ease-in-out infinite}
   @keyframes sk{0%,100%{opacity:1}50%{opacity:.55}}
-  .fade{animation:fade .2s ease}
+  .fade{animation:fade .18s ease}
   @keyframes fade{from{opacity:0}to{opacity:1}}
-  @media(prefers-reduced-motion:reduce){.fade,.sk{animation:none}}
+  @media(prefers-reduced-motion:reduce){.fade,.sk,.hl{animation:none}}
 `;
