@@ -54,21 +54,6 @@ async function api(path,opts={}){
   return data;
 }
 
-/* 노션 앱으로 바로 열기 — notion:// 로 앱을 띄우고, 앱이 없어 화면을 못 벗어나면 웹으로 */
-function openNotion(id){
-  const clean=String(id||"").replace(/-/g,"");
-  if(!clean) return;
-  let left=false;
-  const onHide=()=>{left=true;};
-  document.addEventListener("visibilitychange",onHide,{once:true});
-  window.addEventListener("blur",onHide,{once:true});
-  window.location.href=`notion://www.notion.so/${clean}`;
-  setTimeout(()=>{
-    document.removeEventListener("visibilitychange",onHide);window.removeEventListener("blur",onHide);
-    if(!left) window.location.href=`https://www.notion.so/${clean}`;
-  },900);
-}
-
 /* 마지막으로 노션에서 받은 데이터를 기기에 저장해 두었다가 다음에 바로 띄웁니다 */
 const CACHE_KEY="wr_cache_v1";
 const readCache=()=>{
@@ -102,7 +87,6 @@ export default function App(){
   const [tab,setTab]=useState("todo");
   const [selDate,setSelDate]=useState(toISO(new Date()));
   const [loaded,setLoaded]=useState(!!cache0);
-  const [showManage,setShowManage]=useState(false);
 
   /* 노션 연결 상태: loading | notion | local */
   const [sync,setSync]=useState({mode:cache0?"notion":"loading",error:""});
@@ -436,12 +420,10 @@ export default function App(){
                 })}
               </div>}
 
-            {/* 노션 모드: 노션 앱의 할 일 DB로 바로 이동 / 로컬 모드: 이 화면에서 정리 */}
-            <button className="btn secondary" style={{marginTop:12}}
-              onClick={()=>isNotion&&itemsDb?openNotion(itemsDb):setShowManage(s=>!s)}>
-              {!isNotion&&showManage?"닫기":"할 일 정리하기"}
-            </button>
-            {!isNotion&&showManage&&<Manage items={items} setItems={setItems}/>}
+            {/* 할 일 추가·수정은 노션 DB에서 */}
+            {itemsDb&&
+              <a className="link" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer"
+                style={{display:"block",width:"fit-content",margin:"16px auto 0",fontSize:13}}>할 일 정리하기</a>}
           </div>
         )}
 
@@ -634,7 +616,7 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
           </div>
           {isNotion
             ? <a className="btn icon" href={`https://www.notion.so/${String(st.h.id).replace(/-/g,"")}`} aria-label="노션에서 수정"
-                onClick={e=>{e.preventDefault();openNotion(st.h.id);}}>
+                target="_blank" rel="noopener noreferrer">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
               </a>
@@ -741,31 +723,6 @@ function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDel
   );
 }
 
-/* ── 로컬 모드 할 일 관리 ── */
-function Manage({items,setItems}){
-  const [name,setName]=useState(""),[target,setTarget]=useState(5);
-  const add=()=>{if(!name.trim())return;
-    setItems(p=>[...p,{id:"i"+Date.now(),name:name.trim(),kind:target>=7?"daily":"weekly",target:Math.max(1,Math.min(7,target))}]);setName("");};
-  return(
-    <div className="card fade" style={{padding:"12px 16px",marginTop:8}}>
-      {sortItems(items).map(h=>(
-        <div key={h.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",fontSize:14}}>
-          <span>{h.name} <span className="mono" style={{color:"var(--sub)",fontSize:12}}>{freqLabel(h)}</span></span>
-          <button className="link" onClick={()=>setItems(p=>p.filter(x=>x.id!==h.id))}>삭제</button>
-        </div>
-      ))}
-      <div style={{borderTop:"1px solid var(--line)",marginTop:8,paddingTop:12,display:"flex",flexWrap:"wrap",gap:8}}>
-        <input className="inp" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")add();}}
-          placeholder="새 할 일" style={{flex:"1 1 140px"}}/>
-        <select className="inp" value={target} onChange={e=>setTarget(Number(e.target.value))}>
-          {[7,6,5,4,3,2,1].map(n=><option key={n} value={n}>{n>=7?"매일":`주 ${n}회`}</option>)}
-        </select>
-        <button className="btn primary" onClick={add}>추가</button>
-      </div>
-    </div>
-  );
-}
-
 const CSS=`
   @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
   :root{
@@ -794,9 +751,6 @@ const CSS=`
   .btn.icon{width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--line);
     border-radius:10px;background:var(--surface);color:var(--ink);font-size:18px;line-height:1;text-decoration:none}
   .btn.primary{background:var(--acc);color:var(--on-acc);border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600}
-  .btn.secondary{display:block;width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;
-    padding:12px 0;font-size:14px;font-weight:600}
-  .btn.secondary:hover{background:rgba(var(--acc-rgb),.05)}
   .ta{width:100%;resize:none;line-height:1.6;font-size:15px;border:none;background:transparent;padding:4px 2px}
   .lessons-mini{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
   .lessons-mini li{display:flex;gap:10px;font-size:14px;line-height:1.5;word-break:keep-all;white-space:pre-wrap}
@@ -822,7 +776,6 @@ const CSS=`
   .lg.dash{background:repeating-linear-gradient(90deg,var(--sub) 0 4px,transparent 4px 7px)}
   .tip{position:absolute;top:0;z-index:2;pointer-events:none;white-space:nowrap;background:var(--surface);border:1px solid var(--line);
     border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;box-shadow:0 4px 16px rgba(0,0,0,.12)}
-  .inp{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;background:var(--bg);color:var(--ink);outline:none}
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg)}
   .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
     background:var(--ink);color:var(--bg);border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.5}
