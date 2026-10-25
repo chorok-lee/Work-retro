@@ -531,7 +531,7 @@ export default function App(){
                       <div key={h.id} className="cell tap" role="checkbox" aria-checked={on} tabIndex={0}
                         onClick={()=>toggleLog(h.id,selDate)}
                         onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();toggleLog(h.id,selDate);}}}>
-                        <Circle on={on}/>
+                        <CheckBox on={on}/>
                         <div className="cell-body">
                           <div className="cell-main">
                             <div className={"cell-title"+(on?" done":"")}>{h.name}</div>
@@ -590,7 +590,7 @@ export default function App(){
       </nav>
 
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
-        onClose={closeDetail} onCheckToday={()=>toggleLog(detailItem.id,today)}/>}
+        onClose={closeDetail}/>}
       {toast&&<div className="toast fade" role="status">{toast}</div>}
     </div>
   );
@@ -610,8 +610,12 @@ function Chevron({dir="r",size=20}){
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d={dir==="l"?"M15 5l-7 7 7 7":"M9 5l7 7-7 7"}/></svg>;
 }
-/* 미리 알림 앱 같은 둥근 체크 */
-function Circle({on}){ return <span className={"circle"+(on?" on":"")} aria-hidden="true"/>; }
+/* 체크박스 — 둥근 네모, 체크하면 파랑 채움 + 흰 체크 */
+function CheckBox({on}){
+  return <span className={"cbox"+(on?" on":"")} aria-hidden="true">
+    {on&&<svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 7.3 5.8 10 11 4.2" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+  </span>;
+}
 
 /* ── 로딩: 실제 화면과 같은 자리의 뼈대 ── */
 function LoadingView(){
@@ -729,7 +733,7 @@ function ItemRow({st,today,onOpen}){
 
 /* ── 루틴 상세 ── 잔디 · 통계 · 월별 기록 (iOS 푸시 화면처럼) */
 const PAGE_WEEKS=22;
-function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
+function ItemDetail({st,today,isNotion,onClose}){
   const [page,setPage]=useState(0);
   const maxPage=Math.floor(52/PAGE_WEEKS);
   const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+WORKDAYS-1));
@@ -766,8 +770,6 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
             <button className="btn nav-ico" onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} aria-label="다음 기간"><Chevron dir="r"/></button>
           </div>
         </div>
-        {st.started&&!st.todayOn&&page===0&&
-          <button className="btn filled" style={{width:"100%",marginTop:16}} onClick={onCheckToday}>오늘 체크하기</button>}
 
         <section className="group" style={{marginTop:20}}>
           <div className="cells">
@@ -825,7 +827,7 @@ function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
           <div key={t.id} className="cell">
             <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="hit"
               onClick={()=>onToggle(t)}
-              onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}><Circle on={t.done}/></span>
+              onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}><CheckBox on={t.done}/></span>
             <div className="cell-body">
               {edit?.id===t.id
                 ? <input className="cell-input" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
@@ -999,14 +1001,14 @@ const CSS=`
     --bg:#F2F2F7;--cell:#FFFFFF;--label:#000000;--label2:rgba(60,60,67,.6);--label3:rgba(60,60,67,.3);
     --sep:rgba(60,60,67,.29);--fill:rgba(120,120,128,.16);--fill2:rgba(120,120,128,.08);--gray2:#AEAEB2;--gray3:#C7C7CC;
     --blue:#007AFF;--blue-rgb:0,122,255;--green:#34C759;--orange:#FF9500;--red:#FF3B30;--purple:#AF52DE;
-    --bar:rgba(249,249,249,.86);--banner:#FFF4E0;--banner-ink:#9A5B00;
+    --bar:rgba(249,249,249,.86);--bar-top:rgba(242,242,247,.9);--banner:#FFF4E0;--banner-ink:#9A5B00;
     color-scheme:light;
   }
   @media(prefers-color-scheme:dark){:root{
     --bg:#000000;--cell:#1C1C1E;--label:#FFFFFF;--label2:rgba(235,235,245,.6);--label3:rgba(235,235,245,.3);
     --sep:rgba(84,84,88,.65);--fill:rgba(120,120,128,.32);--fill2:rgba(120,120,128,.16);--gray2:#636366;--gray3:#48484A;
     --blue:#0A84FF;--blue-rgb:10,132,255;--green:#30D158;--orange:#FF9F0A;--red:#FF453A;--purple:#BF5AF2;
-    --bar:rgba(22,22,24,.82);--banner:#2E2310;--banner-ink:#FFC56B;
+    --bar:rgba(22,22,24,.82);--bar-top:rgba(0,0,0,.86);--banner:#2E2310;--banner-ink:#FFC56B;
     color-scheme:dark;
   }}
   *{box-sizing:border-box}
@@ -1015,12 +1017,13 @@ const CSS=`
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Apple SD Gothic Neo","Pretendard",system-ui,sans-serif}
   .num{font-variant-numeric:tabular-nums}
   button,input,textarea{font-family:inherit;color:inherit;letter-spacing:inherit}
-  .wrap{max-width:600px;margin:0 auto;padding:0 16px calc(96px + env(safe-area-inset-bottom))}
+  .wrap{max-width:600px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left)) calc(90px + max(10px,env(safe-area-inset-bottom))) max(16px,env(safe-area-inset-right))}
 
   /* 위쪽 막대 — 처음엔 투명, 스크롤하면 반투명 + 작은 제목 + 가는 선 */
-  .navbar{position:sticky;top:0;z-index:20;padding-top:env(safe-area-inset-top);transition:background .2s}
+  .navbar{position:sticky;top:0;z-index:20;padding-top:env(safe-area-inset-top);background:var(--bar-top);
+    -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);transition:box-shadow .2s}
   .navbar-in{max-width:600px;margin:0 auto;height:44px;padding:0 8px 0 16px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
-  .navbar.scrolled{background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);box-shadow:0 .5px 0 var(--sep)}
+  .navbar.scrolled{box-shadow:0 .5px 0 var(--sep)}
   .nav-title{font-size:17px;font-weight:600;opacity:0;transition:opacity .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56vw}
   .navbar.scrolled .nav-title{opacity:1}
   .nav-actions{display:flex;align-items:center;gap:2px}
@@ -1072,14 +1075,15 @@ const CSS=`
   .add-ico::before{width:12px;height:2px}.add-ico::after{width:2px;height:12px}
 
   /* 미리 알림 같은 둥근 체크 */
-  .hit{display:flex;padding:8px;margin:-8px;cursor:pointer;border-radius:50%}
-  .circle{width:24px;height:24px;border-radius:50%;border:1.5px solid var(--gray3);flex:0 0 auto;display:flex;align-items:center;justify-content:center;transition:border-color .15s}
-  .circle.on{border-color:var(--blue)}
-  .circle.on::after{content:"";width:15px;height:15px;border-radius:50%;background:var(--blue);animation:pop .22s cubic-bezier(.3,1.5,.6,1)}
+  .hit{display:flex;padding:8px;margin:-8px;cursor:pointer;border-radius:8px}
+  .cbox{width:22px;height:22px;border-radius:6px;border:1.5px solid var(--gray3);flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+    transition:background .15s,border-color .15s}
+  .cbox.on{background:var(--blue);border-color:var(--blue)}
+  .cbox.on svg{animation:pop .22s cubic-bezier(.3,1.5,.6,1)}
   @keyframes pop{from{transform:scale(.3)}}
 
   /* 요약 카드 (건강 앱처럼) */
-  .card{background:var(--cell);border-radius:12px;padding:14px 16px 16px;margin-top:16px}
+  .card{background:var(--cell);border-radius:12px;padding:14px 16px 16px;margin-top:10px}
   .card-head{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600}
   .value{display:flex;align-items:baseline;gap:4px;margin-top:10px}
   .value .num{font-family:ui-rounded,"SF Pro Rounded",-apple-system,"Pretendard",sans-serif;font-size:34px;font-weight:700;line-height:1}
@@ -1112,17 +1116,17 @@ const CSS=`
 
   /* 아래 탭 막대 */
   .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;gap:0;
-    padding:6px 0 calc(4px + env(safe-area-inset-bottom));background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
+    padding:6px env(safe-area-inset-right) max(10px,env(safe-area-inset-bottom)) env(safe-area-inset-left);background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
     box-shadow:0 -.5px 0 var(--sep)}
   .tab{flex:0 1 160px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--gray2);font-size:10px;font-weight:500;letter-spacing:0;padding:2px 0}
   .tab.on{color:var(--blue)}
 
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg)}
-  .toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
+  .toast{position:fixed;left:50%;bottom:calc(66px + max(10px,env(safe-area-inset-bottom)));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
     background:rgba(30,30,32,.92);color:#fff;border-radius:14px;padding:12px 16px;font-size:15px;line-height:1.4;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
   .sk{border-radius:6px;background:var(--fill);animation:sk 1.4s ease-in-out infinite}
   @keyframes sk{0%,100%{opacity:1}50%{opacity:.5}}
   .fade{animation:fade .2s ease}
   @keyframes fade{from{opacity:0}to{opacity:1}}
-  @media(prefers-reduced-motion:reduce){.fade,.sk,.circle.on::after{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
+  @media(prefers-reduced-motion:reduce){.fade,.sk,.cbox.on svg{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
 `;
