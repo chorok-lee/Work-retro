@@ -13,6 +13,7 @@ export const CFG = {
   get itemsDb() { return process.env.NOTION_ITEMS_DB || ""; },
   get logsDb()  { return process.env.NOTION_LOGS_DB  || ""; },
   get owner()   { return process.env.NOTION_OWNER    || ""; },
+  get lessonsDb(){ return process.env.NOTION_LESSONS_DB || ""; },
 };
 
 /* 토큰·DB ID가 없으면 여기서 안내와 함께 끝냄 */

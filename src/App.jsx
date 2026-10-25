@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
-   항목(업무 루틴)마다 주간 목표 횟수를 두고, 날짜별로 체크합니다.
-   [기록] 탭: 날짜별 체크  ·  [회고] 탭: 지난주 대비 페이스, 항목별 기록
+   할 일(업무 루틴)마다 주간 목표 횟수를 두고, 날짜별로 체크합니다.
+   [할 일] 탭: 날짜별 체크  ·  [레슨런] 탭: 그날 배운 점 한 줄
+   [회고] 탭: 지난주 대비 페이스, 이번 주 레슨런, 할 일별 기록
 ──────────────────────────────────────────────────────────── */
 
 /* 노션 연결 전(로컬 모드)에 쓰는 기본 항목 */
@@ -53,6 +54,21 @@ async function api(path,opts={}){
   return data;
 }
 
+/* 노션 앱으로 바로 열기 — notion:// 로 앱을 띄우고, 앱이 없어 화면을 못 벗어나면 웹으로 */
+function openNotion(id){
+  const clean=String(id||"").replace(/-/g,"");
+  if(!clean) return;
+  let left=false;
+  const onHide=()=>{left=true;};
+  document.addEventListener("visibilitychange",onHide,{once:true});
+  window.addEventListener("blur",onHide,{once:true});
+  window.location.href=`notion://www.notion.so/${clean}`;
+  setTimeout(()=>{
+    document.removeEventListener("visibilitychange",onHide);window.removeEventListener("blur",onHide);
+    if(!left) window.location.href=`https://www.notion.so/${clean}`;
+  },900);
+}
+
 /* 마지막으로 노션에서 받은 데이터를 기기에 저장해 두었다가 다음에 바로 띄웁니다 */
 const CACHE_KEY="wr_cache_v1";
 const readCache=()=>{
@@ -83,7 +99,7 @@ export default function App(){
   const [cache0]=useState(readCache);
   const [items,setItems]=useState(()=>cache0?cache0.res.items:[]);
   const [logs,setLogs]=useState(()=>cache0?cache0.logs:{});
-  const [tab,setTab]=useState("today");
+  const [tab,setTab]=useState("todo");
   const [selDate,setSelDate]=useState(toISO(new Date()));
   const [loaded,setLoaded]=useState(!!cache0);
   const [showManage,setShowManage]=useState(false);
@@ -97,6 +113,12 @@ export default function App(){
   const resRef=useRef(cache0?.res||null);
   const olderDone=useRef(false);
   const pending=useRef(new Map());   // 노션에 저장 중인 체크 — 새로 받은 데이터에 덮이지 않도록
+
+  /* 레슨런: 노션 레슨런 DB, 연결 안 되면 이 기기에 저장 */
+  const [lessons,setLessons]=useState(()=>Array.isArray(cache0?.lessons)?cache0.lessons:[]);
+  const [lessonMode,setLessonMode]=useState(cache0?.lessons?"notion":"loading");   // loading | notion | local
+  const [lessonNote,setLessonNote]=useState("");
+  const lessonModeRef=useRef(lessonMode); lessonModeRef.current=lessonMode;
 
   /* 항목 상세 — 주소에 #item/<id>를 붙여 뒤로가기로 닫히게 */
   const hashId=()=>{const m=(window.location.hash||"").match(/^#item\/(.+)$/);return m?decodeURIComponent(m[1]):null;};
@@ -127,7 +149,7 @@ export default function App(){
     const from=toISO(addDays(mondayOf(now),-(RECENT_WEEKS-1)*7));
     const [res,ls]=await Promise.all([api("/api/items"),api(`/api/logs?from=${from}&to=${to}`)]);
     if(!Array.isArray(res?.items)||!res.items.length)
-      throw new Error("노션에서 가져온 항목이 없어요. '활성' 체크가 켜진 항목이 있는지 확인해주세요.");
+      throw new Error("노션에서 가져온 할 일이 없어요. '활성' 체크가 켜진 할 일이 있는지 확인해주세요.");
     resRef.current=res;
     setItems(res.items);
     /* 직전이 로컬 모드였다면 그 기록은 섞지 않음 */
@@ -156,6 +178,22 @@ export default function App(){
     if(l)try{setLogs(JSON.parse(l));}catch{}
   };
 
+  const loadLessonsLocal=(why)=>{
+    try{const l=JSON.parse(LS.get("wr_lessons")||"[]");setLessons(Array.isArray(l)?l:[]);}catch{setLessons([]);}
+    setLessonMode("local"); setLessonNote(why||"");
+  };
+  const loadLessons=async()=>{
+    const from=toISO(addDays(mondayOf(new Date()),-53*7));
+    try{
+      const r=await api(`/api/lessons?from=${from}`);
+      setLessons(Array.isArray(r?.lessons)?r.lessons:[]);
+      setLessonMode("notion"); setLessonNote("");
+    }catch(e){
+      /* 이미 노션 레슨런을 보여주는 중이면 그대로 둠 */
+      if(lessonModeRef.current!=="notion") loadLessonsLocal(`레슨런 DB에 연결하지 못해 이 기기에만 저장돼요. ${e.message||""}`);
+    }
+  };
+
   const lastLoad=useRef(0);
   const refresh=async()=>{
     try{
@@ -163,10 +201,11 @@ export default function App(){
       setSync({mode:"notion",error:""});
       setStaleWarn("");
       loadOlder(info.from);
+      loadLessons();
     }
     catch(e){
       if(sync.mode==="notion") setStaleWarn("노션에 연결하지 못해 마지막으로 불러온 기록을 보여주고 있어요.");
-      else { loadFromLocal(); setSync({mode:"local",error:e.message||"노션에 연결하지 못했어요."}); }
+      else { loadFromLocal(); loadLessonsLocal(""); setSync({mode:"local",error:e.message||"노션에 연결하지 못했어요."}); }
     }
     finally{ setLoaded(true); lastLoad.current=Date.now(); }
   };
@@ -188,10 +227,11 @@ export default function App(){
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(""),3800);return()=>clearTimeout(t);},[toast]);
   useEffect(()=>{if(loaded&&sync.mode==="local")LS.set("wr_items",JSON.stringify(items));},[items,loaded,sync.mode]);
   useEffect(()=>{if(loaded&&sync.mode==="local")LS.set("wr_logs",JSON.stringify(logs));},[logs,loaded,sync.mode]);
+  useEffect(()=>{if(lessonMode==="local")LS.set("wr_lessons",JSON.stringify(lessons));},[lessons,lessonMode]);
   useEffect(()=>{
     if(!loaded||sync.mode!=="notion"||!resRef.current)return;
-    LS.set(CACHE_KEY,JSON.stringify({res:resRef.current,logs,savedAt:Date.now()}));
-  },[items,logs,loaded,sync.mode]);
+    LS.set(CACHE_KEY,JSON.stringify({res:resRef.current,logs,lessons:lessonMode==="notion"?lessons:undefined,savedAt:Date.now()}));
+  },[items,logs,lessons,lessonMode,loaded,sync.mode]);
 
   const today=toISO(new Date());
   const selMon=mondayOf(fromISO(selDate)),weekStart=toISO(selMon);
@@ -220,6 +260,28 @@ export default function App(){
   };
   const weekCount=(id,wd=weekDates)=>wd.reduce((n,d)=>n+(isLogged(id,d)?1:0),0);
 
+  /* 레슨런 추가·삭제 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
+  const addLesson=async(text,date)=>{
+    const tmp={id:"tmp"+Date.now(),date,text};
+    setLessons(p=>[tmp,...p]);
+    if(lessonMode!=="notion"){setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:"l"+Date.now()}:l));return;}
+    try{
+      const r=await api("/api/lessons",{method:"POST",body:JSON.stringify({text,date})});
+      setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:r.id}:l));
+    }catch(e){
+      setLessons(p=>p.filter(l=>l.id!==tmp.id));
+      setToast(e.message||"레슨런을 저장하지 못했어요.");
+      throw e;
+    }
+  };
+  const delLesson=async(id)=>{
+    const prev=lessons;
+    setLessons(p=>p.filter(l=>l.id!==id));
+    if(lessonMode!=="notion"||String(id).startsWith("tmp")) return;
+    try{ await api("/api/lessons",{method:"DELETE",body:JSON.stringify({id})}); }
+    catch(e){ setLessons(prev); setToast(e.message||"삭제하지 못했어요."); }
+  };
+
   /* 항목별 시작일 = 노션 시작일(또는 생성일)과 가장 이른 기록 중 빠른 쪽 */
   const firstLog=useMemo(()=>{
     const out={};
@@ -232,7 +294,6 @@ export default function App(){
   };
 
   const isNotion=sync.mode==="notion";
-  const itemsUrl=itemsDb?`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`:"";
   const list=sortItems(items);
   const detailItem=detailId?items.find(h=>h.id===detailId)||null:null;
   const curMon=mondayOf(fromISO(today));
@@ -295,9 +356,8 @@ export default function App(){
       records:[...logged].reverse(),todayOn:isLogged(h.id,today),started:startISO<=today};
   };
 
-  /* 선택한 날짜가 속한 주의 요약 */
-  const weekSum=list.reduce((a,h)=>{const wc=weekCount(h.id),t=tgtOf(h);
-    a.done+=Math.min(wc,t);a.target+=t;if(wc>=t)a.met++;return a;},{done:0,target:0,met:0});
+  /* 선택한 날짜 하루의 진행 */
+  const dayDone=list.filter(h=>isLogged(h.id,selDate)).length;
 
   const booting=!loaded||sync.mode==="loading";
   const notice = sync.mode==="local"
@@ -305,6 +365,23 @@ export default function App(){
     : (isNotion && (staleWarn || ownerWarn)) || "";
   const selD=fromISO(selDate);
   const selWk=weekOfMonth(weekStart);
+  const dayLabel=selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`;
+  const thisWeekLessons=lessons.filter(l=>l.date>=toISO(curMon)&&l.date<=today);
+
+  /* 할 일·레슨런 탭이 함께 쓰는 날짜 이동 */
+  const dateStepper=(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,margin:"8px 0 12px"}}>
+      <button className="btn icon" aria-label="이전 날" onClick={()=>setSelDate(toISO(addDays(selD,-1)))}>‹</button>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:16,fontWeight:700}}>{selD.getMonth()+1}월 {selD.getDate()}일 ({DAYS[(selD.getDay()+6)%7]})</div>
+        <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>
+          {selWk.m}월 {selWk.w}주차{selDate!==today&&<> · <button className="link" onClick={()=>setSelDate(today)}>오늘로</button></>}
+        </div>
+      </div>
+      <button className="btn icon" aria-label="다음 날" disabled={selDate>=today}
+        onClick={()=>{const n=addDays(selD,1);if(toISO(n)<=today)setSelDate(toISO(n));}}>›</button>
+    </div>
+  );
 
   return (
     <div className="app">
@@ -314,7 +391,7 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
             <h1 style={{fontSize:17,fontWeight:700,margin:0,letterSpacing:"-0.01em"}}>업무 회고</h1>
             <div role="tablist" className="seg">
-              {[["today","기록"],["review","회고"]].map(([k,l])=>(
+              {[["todo","할 일"],["lessons","레슨런"],["review","회고"]].map(([k,l])=>(
                 <button key={k} role="tab" aria-selected={tab===k} className={"btn"+(tab===k?" on":"")} onClick={()=>setTab(k)}>{l}</button>
               ))}
             </div>
@@ -324,33 +401,21 @@ export default function App(){
 
         {booting&&<LoadingView/>}
 
-        {!booting&&tab==="today"&&(
+        {!booting&&tab==="todo"&&(
           <div className="fade">
-            {/* 날짜 */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,margin:"8px 0 12px"}}>
-              <button className="btn icon" aria-label="이전 날" onClick={()=>setSelDate(toISO(addDays(selD,-1)))}>‹</button>
-              <div style={{textAlign:"center"}}>
-                <div style={{fontSize:16,fontWeight:700}}>{selD.getMonth()+1}월 {selD.getDate()}일 ({DAYS[(selD.getDay()+6)%7]})</div>
-                <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>
-                  {selWk.m}월 {selWk.w}주차{selDate!==today&&<> · <button className="link" onClick={()=>setSelDate(today)}>오늘로</button></>}
-                </div>
-              </div>
-              <button className="btn icon" aria-label="다음 날" disabled={selDate>=today}
-                onClick={()=>{const n=addDays(selD,1);if(toISO(n)<=today)setSelDate(toISO(n));}}>›</button>
-            </div>
+            {dateStepper}
 
-            {/* 이번 주 요약 */}
+            {/* 하루 진행 */}
             {list.length>0&&
               <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
-                  <span style={{color:"var(--sub)"}}>{selDate>=toISO(curMon)?"이번 주":`${selWk.m}월 ${selWk.w}주차`} 진행</span>
-                  <span className="mono"><b>{weekSum.done}</b><span style={{color:"var(--sub)"}}> / {weekSum.target}회</span>
-                    <span style={{color:"var(--sub)"}}> · 목표 달성 {weekSum.met}/{list.length}</span></span>
+                  <span style={{color:"var(--sub)"}}>{dayLabel} 진행</span>
+                  <span className="mono"><b>{dayDone}</b><span style={{color:"var(--sub)"}}> / {list.length}개 완료</span></span>
                 </div>
-                <div className="bar" style={{marginTop:10}}><div style={{width:`${weekSum.target?weekSum.done/weekSum.target*100:0}%`}}/></div>
+                <div className="bar" style={{marginTop:10}}><div style={{width:`${dayDone/list.length*100}%`}}/></div>
               </div>}
 
-            {/* 항목 목록 */}
+            {/* 할 일 목록 */}
             {list.length>0&&
               <div className="card" style={{padding:4}}>
                 {list.map((h,i)=>{
@@ -371,22 +436,34 @@ export default function App(){
                 })}
               </div>}
 
-            {isNotion&&itemsUrl&&
-              <a href={itemsUrl} target="_blank" rel="noopener noreferrer" className="link"
-                style={{display:"block",width:"fit-content",margin:"16px auto 0",fontSize:13}}>노션에서 항목 관리</a>}
-
-            {!isNotion&&<>
-              <button className="link" onClick={()=>setShowManage(s=>!s)} style={{display:"block",margin:"16px auto 0",fontSize:13}}>
-                {showManage?"닫기":"항목 추가 · 정리"}
-              </button>
-              {showManage&&<Manage items={items} setItems={setItems}/>}
-            </>}
+            {/* 노션 모드: 노션 앱의 할 일 DB로 바로 이동 / 로컬 모드: 이 화면에서 정리 */}
+            <button className="btn secondary" style={{marginTop:12}}
+              onClick={()=>isNotion&&itemsDb?openNotion(itemsDb):setShowManage(s=>!s)}>
+              {!isNotion&&showManage?"닫기":"할 일 정리하기"}
+            </button>
+            {!isNotion&&showManage&&<Manage items={items} setItems={setItems}/>}
           </div>
+        )}
+
+        {!booting&&tab==="lessons"&&(
+          <LessonsTab dateStepper={dateStepper} selDate={selDate} dayLabel={dayLabel} today={today}
+            lessons={lessons} note={lessonNote} onAdd={addLesson} onDelete={delLesson}/>
         )}
 
         {!booting&&tab==="review"&&(
           <div className="fade">
             <PaceCard p={paceOf(list)}/>
+            <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
+                <span style={{color:"var(--sub)"}}>이번 주 레슨런</span>
+                <span className="mono" style={{color:"var(--sub)"}}>{thisWeekLessons.length}개</span>
+              </div>
+              {thisWeekLessons.length===0
+                ? <div style={{fontSize:13,color:"var(--sub)",marginTop:8}}>아직 없어요. 레슨런 탭에서 남길 수 있어요.</div>
+                : <ul className="lessons-mini">
+                    {thisWeekLessons.map(l=><li key={l.id}><span className="mono">{DAYS[(fromISO(l.date).getDay()+6)%7]}</span>{l.text}</li>)}
+                  </ul>}
+            </div>
             {list.length>0&&
               <div className="card" style={{padding:4}}>
                 {list.map((h,i)=>(
@@ -420,7 +497,7 @@ function PaceCard({p}){
   const [hi,setHi]=useState(null);
   if(!p) return null;
   const {todayIdx,cur,prev,now,diff,onTrack,total,best,bestMon}=p;
-  const W=560,H=150,PX=24,PT=18,PB=14;
+  const W=560,H=75,PX=24,PT=9,PB=7;
   const max=Math.max(prev[6],now,1);
   const X=(i)=>PX+(W-PX*2)*i/6, Y=(v)=>PT+(H-PT-PB)*(1-v/max);
   const pts=(arr,n)=>arr.slice(0,n).map((v,i)=>`${X(i)},${Y(v)}`).join(" ");
@@ -556,7 +633,8 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
             <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>{freqLabel(st.h)}</div>
           </div>
           {isNotion
-            ? <a className="btn icon" href={`https://www.notion.so/${String(st.h.id).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer" aria-label="노션에서 수정">
+            ? <a className="btn icon" href={`https://www.notion.so/${String(st.h.id).replace(/-/g,"")}`} aria-label="노션에서 수정"
+                onClick={e=>{e.preventDefault();openNotion(st.h.id);}}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
               </a>
@@ -611,7 +689,59 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   );
 }
 
-/* ── 로컬 모드 항목 관리 ── */
+/* ── 레슨런 ── 그날 일하며 배운 점을 한 줄로 남기고, 주차별로 모아 봄 */
+function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDelete}){
+  const [draft,setDraft]=useState("");
+  const [saving,setSaving]=useState(false);
+  const save=async()=>{
+    const t=draft.trim(); if(!t||saving) return;
+    setSaving(true);
+    try{ await onAdd(t,selDate); setDraft(""); }catch(e){}
+    finally{ setSaving(false); }
+  };
+  /* 주차별 묶음 (최신 주가 위) */
+  const groups=[];
+  for(const l of [...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)){
+    const k=toISO(mondayOf(fromISO(l.date)));
+    let g=groups[groups.length-1]; if(!g||g.k!==k){g={k,items:[]};groups.push(g);} g.items.push(l);
+  }
+  const curK=toISO(mondayOf(fromISO(today)));
+  return(
+    <div className="fade">
+      {dateStepper}
+      <div className="card" style={{padding:"10px 14px 12px",marginBottom:12}}>
+        <textarea className="ta" rows={3} maxLength={500} value={draft} onChange={e=>setDraft(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}}}
+          placeholder="배운 점, 다음에 다르게 할 점을 한 줄로" aria-label="레슨런 내용"/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+          <span style={{fontSize:12,color:"var(--sub)"}}>{dayLabel} 레슨런으로 저장</span>
+          <button className="btn primary" disabled={!draft.trim()||saving} onClick={save}>{saving?"저장 중…":"저장"}</button>
+        </div>
+      </div>
+      {note&&<div className="notice" style={{marginTop:0,marginBottom:12}}>{note}</div>}
+      {groups.length===0
+        ? <div style={{fontSize:13,color:"var(--sub)",textAlign:"center",padding:"24px 0"}}>아직 레슨런이 없어요</div>
+        : groups.map(g=>{const wk=weekOfMonth(g.k);return(
+            <div key={g.k} style={{marginBottom:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",margin:"0 2px 6px",fontSize:12,color:"var(--sub)"}}>
+                <span>{g.k===curK?"이번 주":`${wk.m}월 ${wk.w}주차`}</span><span className="mono">{g.items.length}개</span>
+              </div>
+              <div className="card" style={{padding:"0 4px 0 16px"}}>
+                {g.items.map((l,i)=>{const d=fromISO(l.date);return(
+                  <div key={l.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"10px 0",borderTop:i?"1px solid var(--line)":"none"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,lineHeight:1.55,whiteSpace:"pre-wrap",wordBreak:"keep-all"}}>{l.text}</div>
+                      <div className="mono" style={{fontSize:12,color:"var(--sub)",marginTop:3}}>{d.getMonth()+1}월 {d.getDate()}일 ({DAYS[(d.getDay()+6)%7]})</div>
+                    </div>
+                    <button className="btn del" aria-label="삭제" onClick={()=>{if(window.confirm("이 레슨런을 삭제할까요?"))onDelete(l.id);}}>×</button>
+                  </div>);})}
+              </div>
+            </div>);})}
+    </div>
+  );
+}
+
+/* ── 로컬 모드 할 일 관리 ── */
 function Manage({items,setItems}){
   const [name,setName]=useState(""),[target,setTarget]=useState(5);
   const add=()=>{if(!name.trim())return;
@@ -626,7 +756,7 @@ function Manage({items,setItems}){
       ))}
       <div style={{borderTop:"1px solid var(--line)",marginTop:8,paddingTop:12,display:"flex",flexWrap:"wrap",gap:8}}>
         <input className="inp" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")add();}}
-          placeholder="새 항목 이름" style={{flex:"1 1 140px"}}/>
+          placeholder="새 할 일" style={{flex:"1 1 140px"}}/>
         <select className="inp" value={target} onChange={e=>setTarget(Number(e.target.value))}>
           {[7,6,5,4,3,2,1].map(n=><option key={n} value={n}>{n>=7?"매일":`주 ${n}회`}</option>)}
         </select>
@@ -664,9 +794,18 @@ const CSS=`
   .btn.icon{width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--line);
     border-radius:10px;background:var(--surface);color:var(--ink);font-size:18px;line-height:1;text-decoration:none}
   .btn.primary{background:var(--acc);color:var(--on-acc);border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600}
+  .btn.secondary{display:block;width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;
+    padding:12px 0;font-size:14px;font-weight:600}
+  .btn.secondary:hover{background:rgba(var(--acc-rgb),.05)}
+  .ta{width:100%;resize:none;line-height:1.6;font-size:15px;border:none;background:transparent;padding:4px 2px}
+  .lessons-mini{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .lessons-mini li{display:flex;gap:10px;font-size:14px;line-height:1.5;word-break:keep-all;white-space:pre-wrap}
+  .lessons-mini li span{color:var(--sub);font-size:12px;flex:0 0 auto;padding-top:2px}
+  .btn.del{border:none;background:none;color:var(--sub);font-size:18px;line-height:1;width:32px;height:32px;flex:0 0 auto;border-radius:8px}
+  .btn.del:hover{background:var(--cell)}
   .link{background:none;border:none;padding:4px;color:var(--sub);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--cell)}
-  .seg .btn{border:none;background:transparent;color:var(--sub);padding:6px 16px;border-radius:8px;font-size:14px;font-weight:600}
+  .seg .btn{border:none;background:transparent;color:var(--sub);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:600}
   .seg .btn.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
   .row{display:flex;align-items:center;gap:12px;padding:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;font-family:inherit}
   .row:hover{background:rgba(var(--acc-rgb),.04)}

@@ -23,6 +23,7 @@ export default async function handler(req, res) {
     res.status(200).json({
       항목DB: { id: CFG.itemsDb, 속성: summarize(items) },
       기록DB: { id: CFG.logsDb, 속성: summarize(logs) },
+      레슨런DB: CFG.lessonsDb || "(미설정 → 제목 '레슨런'으로 자동 탐색)",
       설정: {
         NOTION_OWNER: CFG.owner || "(미설정 → 모든 항목 표시)",
         NOTION_OWNER_PROP: process.env.NOTION_OWNER_PROP || "(미설정 → 자동 탐색)",
