@@ -469,145 +469,169 @@ export default function App(){
   const dayLabel=selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`;
   const thisWeekLessons=lessons.filter(l=>l.date>=toISO(curMon)&&l.date<=today);
 
-  /* 오늘·레슨런 탭이 함께 쓰는 날짜 머리말 — 일지 한 장의 날짜 칸 */
-  const dateStepper=(
-    <div className="pagehead">
-      <div style={{minWidth:0}}>
-        <h2 className="date">{selD.getMonth()+1}월 {selD.getDate()}일</h2>
-        <div className="meta">
-          <span>{wdOf(selDate)}요일, {selWk.m}월 {selWk.w}주차</span>
-          {selDate!==workToday&&<button className="link" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘로":"최근 평일로"}</button>}
-        </div>
-      </div>
-      <div className="steps">
-        <button className="btn icon" aria-label="이전 평일" onClick={()=>setSelDate(prevWorkday(selDate))}>‹</button>
-        <button className="btn icon" aria-label="다음 평일" disabled={nextWorkday(selDate)>today}
-          onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}>›</button>
-      </div>
+  /* 내비게이션 — iOS처럼 큰 제목 + 위쪽 막대(스크롤하면 작은 제목) + 아래 탭 막대 */
+  const [scrolled,setScrolled]=useState(false);
+  useEffect(()=>{const on=()=>setScrolled(window.scrollY>44);on();window.addEventListener("scroll",on,{passive:true});return()=>window.removeEventListener("scroll",on);},[]);
+  const title=tab==="todo"?(selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`):tab==="lessons"?"레슨런":"회고";
+  const fullDate=`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`;
+  const subtitle=tab==="todo"?(selDate===today?fullDate:`${wdOf(selDate)}요일`)
+    :tab==="lessons"?`${fullDate}에 기록`:`${weekOfMonth(toISO(curMon)).m}월 ${weekOfMonth(toISO(curMon)).w}주차`;
+  const dayNav=tab!=="review"&&(
+    <div className="nav-actions">
+      {selDate!==workToday&&<button className="btn txt" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘":"최근 평일"}</button>}
+      <button className="btn nav-ico" aria-label="이전 평일" onClick={()=>setSelDate(prevWorkday(selDate))}><Chevron dir="l"/></button>
+      <button className="btn nav-ico" aria-label="다음 평일" disabled={nextWorkday(selDate)>today}
+        onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}><Chevron dir="r"/></button>
     </div>
   );
+  const dateStepper=null;   // 날짜 이동은 위쪽 막대에
 
   return (
     <div className="app">
       <style>{CSS}</style>
-      <div className="wrap">
-        <header className="navbar">
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <h1 className="brand">업무 회고</h1>
-            <div role="tablist" className="tabs">
-              {[["todo","오늘"],["lessons","레슨런"],["review","회고"]].map(([k,l])=>(
-                <button key={k} role="tab" aria-selected={tab===k} className={"btn"+(tab===k?" on":"")} onClick={()=>setTab(k)}>{l}</button>
-              ))}
-            </div>
-          </div>
-          {notice&&<div className="notice">{notice}</div>}
-        </header>
+      <header className={"navbar"+(scrolled?" scrolled":"")}>
+        <div className="navbar-in">
+          <span/>
+          <span className="nav-title" aria-hidden={!scrolled}>{title}</span>
+          <div style={{justifySelf:"end"}}>{dayNav}</div>
+        </div>
+      </header>
+
+      <main className="wrap">
+        <h1 className="large-title">{title}</h1>
+        <p className="subtitle">{subtitle}</p>
+        {notice&&<div className="banner" role="status">{notice}</div>}
 
         {booting&&<LoadingView/>}
 
         {!booting&&tab==="todo"&&(
           <div className="fade">
-            {dateStepper}
-
             {evening&&ratingCard}
 
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
-            <TasksSection title={selDate===today?"오늘 할 일":`${selD.getMonth()+1}월 ${selD.getDate()}일 할 일`}
-              tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
+            <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}/>
 
             {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
-            {list.length>0&&<>
-              <div className="sec">
-                <span>매일 루틴</span>
-                <span className="sec-side">
-                  <span className="mono"><b>{dayDone}</b> / {list.length}</span>
-                  {/* 루틴 추가·수정은 노션 DB에서 */}
-                  {itemsDb&&<a className="link" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`}
-                    target="_blank" rel="noopener noreferrer">관리하기</a>}
-                </span>
-              </div>
-              <div className="list">
-                {list.map((h,i)=>{
-                  const on=isLogged(h.id,selDate),wc=weekCount(h.id),t=tgtOf(h);
-                  return(
-                    <div key={h.id} className="row" role="checkbox" aria-checked={on} tabIndex={0}
-                      onClick={()=>toggleLog(h.id,selDate)}
-                      onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();toggleLog(h.id,selDate);}}}>
-                      <Check on={on}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div className="row-title"><span className={on?"hl":undefined}>{h.name}</span></div>
-                        <div className="row-meta">{freqLabel(h)}</div>
+            {list.length>0&&
+              <section className="group">
+                <div className="group-head">
+                  <h2>매일 루틴</h2>
+                  <span className="group-side">
+                    <span className="num">{dayDone}/{list.length}</span>
+                    {/* 루틴 추가·수정은 노션 DB에서 */}
+                    {itemsDb&&<a className="btn txt" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`}
+                      target="_blank" rel="noopener noreferrer">관리하기</a>}
+                  </span>
+                </div>
+                <div className="cells">
+                  {list.map(h=>{
+                    const on=isLogged(h.id,selDate),wc=weekCount(h.id),t=tgtOf(h);
+                    return(
+                      <div key={h.id} className="cell tap" role="checkbox" aria-checked={on} tabIndex={0}
+                        onClick={()=>toggleLog(h.id,selDate)}
+                        onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();toggleLog(h.id,selDate);}}}>
+                        <Circle on={on}/>
+                        <div className="cell-body">
+                          <div className="cell-main">
+                            <div className={"cell-title"+(on?" done":"")}>{h.name}</div>
+                            <div className="cell-sub">{freqLabel(h)}</div>
+                          </div>
+                          <span className={"cell-value num"+(wc>=t?" met":"")}>{Math.min(wc,t)}/{t}</span>
+                        </div>
                       </div>
-                      <Tally n={wc} of={t}/>
-                    </div>
-                  );
-                })}
-              </div>
-            </>}
+                    );
+                  })}
+                </div>
+                <p className="group-foot">오른쪽 숫자는 이번 주 체크 횟수예요.</p>
+              </section>}
 
-            {!evening&&<div style={{marginTop:12}}>{ratingCard}</div>}
-
-
+            {!evening&&ratingCard}
           </div>
         )}
 
         {!booting&&tab==="lessons"&&(
-          <LessonsTab dateStepper={dateStepper} selDate={selDate} dayLabel={dayLabel} today={today}
+          <LessonsTab selDate={selDate} dayLabel={dayLabel} today={today}
             lessons={lessons} note={lessonNote} onAdd={addLesson} onDelete={delLesson}/>
         )}
 
         {!booting&&tab==="review"&&(
-          <div className="fade" style={{paddingTop:14}}>
+          <div className="fade">
             <PaceCard p={paceOf(list)}/>
             <RatingTrend ratings={ratings} today={today}/>
-            <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
-              <div className="panel-head">
-                <span>이번 주 레슨런</span>
-                <span className="mono">{thisWeekLessons.length}개</span>
-              </div>
+            <div className="card">
+              <div className="card-head" style={{color:"var(--purple)"}}><Icon name="bulb" size={17}/>이번 주 레슨런</div>
               {thisWeekLessons.length===0
-                ? <div style={{fontSize:14,color:"var(--sub)",marginTop:8}}>아직 없어요. 레슨런 탭에서 남길 수 있어요.</div>
-                : <ul className="lessons-mini">
-                    {thisWeekLessons.map(l=><li key={l.id}><span className="mono">{wdOf(l.date)}</span>{l.text}</li>)}
+                ? <p className="card-note">아직 없어요. 레슨런 탭에서 남길 수 있어요.</p>
+                : <ul className="mini-list">
+                    {thisWeekLessons.map(l=><li key={l.id}><span>{wdOf(l.date)}</span>{l.text}</li>)}
                   </ul>}
             </div>
-            {list.length>0&&<>
-              <div className="sec"><span>루틴별 기록</span><span className="sec-side">최근 3주</span></div>
-              <div className="list">
-                {list.map((h,i)=>(
-                  <ItemRow key={h.id} st={itemStats(h)} today={today} first={i===0} onOpen={()=>openDetail(h.id)}/>
-                ))}
-              </div>
-            </>}
+            {list.length>0&&
+              <section className="group">
+                <div className="group-head"><h2>루틴별 기록</h2><span className="group-side">최근 3주</span></div>
+                <div className="cells">
+                  {list.map(h=>(
+                    <ItemRow key={h.id} st={itemStats(h)} today={today} onOpen={()=>openDetail(h.id)}/>
+                  ))}
+                </div>
+              </section>}
           </div>
         )}
-      </div>
+      </main>
+
+      <nav className="tabbar" role="tablist" aria-label="화면">
+        {[["todo","오늘","check"],["lessons","레슨런","bulb"],["review","회고","chart"]].map(([k,l,ic])=>(
+          <button key={k} role="tab" aria-selected={tab===k} className={"btn tab"+(tab===k?" on":"")}
+            onClick={()=>{setTab(k);window.scrollTo({top:0});}}>
+            <Icon name={ic} size={25}/><span>{l}</span>
+          </button>
+        ))}
+      </nav>
+
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
         onClose={closeDetail} onCheckToday={()=>toggleLog(detailItem.id,today)}/>}
-      {toast&&<div className="toast fade">{toast}</div>}
+      {toast&&<div className="toast fade" role="status">{toast}</div>}
     </div>
   );
 }
+
+/* ── 아이콘 — SF Symbols 느낌의 단순한 선 아이콘 ── */
+function Icon({name,size=22}){
+  const p={width:size,height:size,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.8,strokeLinecap:"round",strokeLinejoin:"round","aria-hidden":true};
+  if(name==="check") return <svg {...p}><circle cx="5" cy="6.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.6" fill="currentColor" stroke="none"/><path d="M9.5 6.5H20M9.5 12H20M9.5 17.5H20"/></svg>;
+  if(name==="bulb") return <svg {...p}><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg>;
+  if(name==="chart") return <svg {...p}><path d="M5 20V12M10 20V5M15 20v-9M20 20V8"/></svg>;
+  if(name==="flame") return <svg {...p}><path d="M12 21c3.9 0 6.5-2.7 6.5-6.4 0-3.3-2.3-5.6-3.8-7.6-.4 1.9-1.5 3-2.7 3.5.2-2.8-1-5.4-3.4-7.5-.3 3.5-4.1 6.2-4.1 11.6C4.5 18.3 7.6 21 12 21z"/></svg>;
+  if(name==="star") return <svg {...p} fill="currentColor" stroke="none"><path d={STAR}/></svg>;
+  return null;
+}
+function Chevron({dir="r",size=20}){
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={dir==="l"?"M15 5l-7 7 7 7":"M9 5l7 7-7 7"}/></svg>;
+}
+/* 미리 알림 앱 같은 둥근 체크 */
+function Circle({on}){ return <span className={"circle"+(on?" on":"")} aria-hidden="true"/>; }
 
 /* ── 로딩: 실제 화면과 같은 자리의 뼈대 ── */
 function LoadingView(){
   return(
     <div className="fade" role="status" aria-label="불러오는 중">
-      <div className="sk" style={{height:40,width:"46%",margin:"18px 0 8px"}}/>
-      <div className="sk" style={{height:16,width:"34%",marginBottom:28}}/>
-      <div className="sk" style={{height:220}}/>
+      <div className="sk" style={{height:22,width:90,margin:"26px 16px 10px"}}/>
+      <div className="sk" style={{height:180,borderRadius:10}}/>
+      <div className="sk" style={{height:22,width:110,margin:"30px 16px 10px"}}/>
+      <div className="sk" style={{height:240,borderRadius:10}}/>
     </div>
   );
 }
 
-/* ── 페이스 카드: 지난주 같은 요일까지 vs 이번 주 지금까지 ──
-   월→일 누적 체크 수 (지난주 점선 / 이번 주 실선) */
+/* ── 루틴 체크 요약 (건강 앱 요약 카드처럼) ──
+   이번 주 누적 체크와 지난주 같은 요일까지의 누적 비교 (지난주 점선 / 이번 주 실선) */
 function PaceCard({p}){
   const [hi,setHi]=useState(null);
   if(!p) return null;
   const {todayIdx,cur,prev,now,diff,onTrack,total,best,bestMon}=p;
-  const W=560,H=75,PX=24,PT=9,PB=7;
+  const W=560,H=96,PX=10,PT=10,PB=6;
   const last=DAYS.length-1;
   const max=Math.max(prev[last],now,1);
   const X=(i)=>PX+(W-PX*2)*i/last, Y=(v)=>PT+(H-PT-PB)*(1-v/max);
@@ -617,51 +641,42 @@ function PaceCard({p}){
   const wk=bestMon&&weekOfMonth(bestMon);
   const pick=(e)=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;
     setHi(Math.max(0,Math.min(last,Math.round((x-PX)/((W-PX*2)/last)))));};
-
-  return(
-    <div className="card" style={{padding:"20px 18px",marginBottom:12}}>
-      <p className="lead">이번 주 루틴을 {now}회 체크했어요</p>
-      <div style={{fontSize:14,color:"var(--sub)",marginTop:6}}>{label}</div>
-
-      <div style={{position:"relative",marginTop:16}} onPointerMove={pick} onPointerDown={pick}
+  return(<>
+    <div className="card" style={{marginTop:8}}>
+      <div className="card-head" style={{color:"var(--blue)"}}><Icon name="check" size={17}/>루틴 체크</div>
+      <div className="value"><span className="num">{now}</span><small>회</small></div>
+      <p className="card-note">{label}</p>
+      <div style={{position:"relative",marginTop:14}} onPointerMove={pick} onPointerDown={pick}
         onPointerLeave={e=>{if(e.pointerType==="mouse")setHi(null);}}>
         {hi!=null&&
-          <div className="tip" style={{left:`${X(hi)/W*100}%`,transform:`translate(${hi<=0?"-12%":hi>=last?"-88%":"-50%"},-100%)`}}>
-            <div style={{fontWeight:600,marginBottom:2}}>{DAYS[hi]}요일까지</div>
-            <div style={{color:"var(--acc)"}}>이번 주 <b>{hi<=todayIdx?`${cur[hi]}회`:"–"}</b></div>
-            <div style={{color:"var(--sub)"}}>지난주 <b style={{color:"var(--ink)"}}>{prev[hi]}회</b></div>
+          <div className="tip" style={{left:`${X(hi)/W*100}%`,transform:`translate(${hi<=0?"-8%":hi>=last?"-92%":"-50%"},-100%)`}}>
+            <div style={{fontWeight:600}}>{DAYS[hi]}요일까지</div>
+            <div>이번 주 <b className="num">{hi<=todayIdx?`${cur[hi]}회`:"–"}</b></div>
+            <div style={{color:"var(--label2)"}}>지난주 <span className="num">{prev[hi]}회</span></div>
           </div>}
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",overflow:"visible",touchAction:"pan-y"}} aria-hidden="true">
-          {[0,.5,1].map(f=><line key={f} x1={PX} x2={W-PX} y1={Y(max*f)} y2={Y(max*f)} stroke="var(--line)" strokeWidth="1"/>)}
-          {hi!=null&&<line x1={X(hi)} x2={X(hi)} y1={PT-8} y2={H-PB+4} stroke="var(--sub)" strokeOpacity=".5" strokeWidth="1" strokeDasharray="3 4"/>}
-          <polyline points={pts(prev,DAYS.length)} fill="none" stroke="var(--sub)" strokeOpacity=".7" strokeWidth="2"
-            strokeDasharray="5 6" strokeLinecap="round" strokeLinejoin="round"/>
-          <polyline points={pts(cur,todayIdx+1)} fill="none" stroke="var(--acc)" strokeWidth="2.5"
-            strokeLinecap="round" strokeLinejoin="round"/>
-          {hi!=null&&<circle cx={X(hi)} cy={Y(prev[hi])} r="4" fill="var(--sub)"/>}
-          {hi!=null&&hi<todayIdx&&<circle cx={X(hi)} cy={Y(cur[hi])} r="4" fill="var(--acc)"/>}
-          <circle cx={X(todayIdx)} cy={Y(now)} r="5" fill="var(--acc)" stroke="var(--surface)" strokeWidth="2"/>
+          {[0,.5,1].map(f=><line key={f} x1={PX} x2={W-PX} y1={Y(max*f)} y2={Y(max*f)} stroke="var(--sep)" strokeWidth="1"/>)}
+          {hi!=null&&<line x1={X(hi)} x2={X(hi)} y1={PT-6} y2={H-PB+2} stroke="var(--label3)" strokeWidth="1"/>}
+          <polyline points={pts(prev,DAYS.length)} fill="none" stroke="var(--gray2)" strokeWidth="2" strokeDasharray="4 5" strokeLinecap="round" strokeLinejoin="round"/>
+          <polyline points={pts(cur,todayIdx+1)} fill="none" stroke="var(--blue)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+          {hi!=null&&<circle cx={X(hi)} cy={Y(prev[hi])} r="4" fill="var(--gray2)"/>}
+          {hi!=null&&hi<todayIdx&&<circle cx={X(hi)} cy={Y(cur[hi])} r="4" fill="var(--blue)"/>}
+          <circle cx={X(todayIdx)} cy={Y(now)} r="5.5" fill="var(--blue)" stroke="var(--cell)" strokeWidth="2.5"/>
         </svg>
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",padding:`6px ${PX/W*100}% 0`,fontSize:12}}>
-        {DAYS.map((d,i)=><span key={d} style={{width:0,display:"flex",justifyContent:"center",
-          color:i===todayIdx?"var(--ink)":"var(--sub)",fontWeight:i===todayIdx?700:400,opacity:i>todayIdx?.5:1}}>{d}</span>)}
+      <div className="axis" style={{padding:`6px ${PX/W*100}% 0`}}>
+        {DAYS.map((d,i)=><span key={d} className={i===todayIdx?"on":undefined} style={{opacity:i>todayIdx?.45:1}}>{d}</span>)}
       </div>
-      <div style={{display:"flex",gap:14,marginTop:12,fontSize:12,color:"var(--sub)"}}>
-        <span style={{display:"flex",alignItems:"center",gap:6}}><i className="lg" style={{background:"var(--acc)"}}/>이번 주</span>
-        <span style={{display:"flex",alignItems:"center",gap:6}}><i className="lg dash"/>지난주</span>
-      </div>
-
-      <div className="kv" style={{marginTop:16}}>
-        <div><span>현재 페이스로 목표 달성</span><b className="mono">{onTrack}/{total}개</b></div>
-        {best>0&&<div><span>최고 기록 주</span><b className="mono">{now>best?"이번 주":`${wk.m}월 ${wk.w}주차`}, {Math.max(best,now)}회</b></div>}
+      <div className="card-rows">
+        <div><span>현재 페이스로 목표 달성</span><span className="num">{onTrack}/{total}개</span></div>
+        {best>0&&<div><span>최고 기록 주</span><span className="num">{now>best?"이번 주":`${wk.m}월 ${wk.w}주차`}, {Math.max(best,now)}회</span></div>}
       </div>
     </div>
-  );
+  </>);
 }
 
-/* ── 잔디 ── 세로 7칸(월~일) × N주 */
-const GRASS_BG={full:"var(--acc)",part:"rgba(var(--acc-rgb),.35)",empty:"var(--cell)",pre:"var(--cell-pre)",future:"transparent"};
+/* ── 잔디 ── 세로 5칸(월~금) × N주 */
+const GRASS_BG={full:"var(--blue)",part:"rgba(var(--blue-rgb),.32)",empty:"var(--fill)",pre:"var(--fill2)",future:"transparent"};
 function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
   const endMon=mondayOf(fromISO(endISO));
   const cols=Array.from({length:weeks},(_,i)=>addDays(endMon,-(weeks-1-i)*7));
@@ -669,7 +684,7 @@ function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
   const firstOf=cols.map(m=>Array.from({length:7},(_,i)=>toISO(addDays(m,i))).find(x=>x.endsWith("-01")));
   /* 그 주에 1일이 있으면 월 표시. 첫 칸은 바로 옆 칸에 월 표시가 없을 때만 (글자 겹침 방지) */
   const monthAt=cols.map((m,i)=>firstOf[i]?fromISO(firstOf[i]).getMonth()+1:i===0&&!firstOf[1]?m.getMonth()+1:null);
-  const lab={fontSize:11,color:"var(--sub)",lineHeight:1,whiteSpace:"nowrap"};
+  const lab={fontSize:11,color:"var(--label2)",lineHeight:1,whiteSpace:"nowrap"};
   const kids=[<span key="dm"/>];
   DAYS.forEach((d,i)=>kids.push(<span key={"d"+i} style={{...lab,display:"flex",alignItems:"center",paddingRight:4,visibility:i%2===0?"visible":"hidden"}}>{d}</span>));
   cols.forEach((m,ci)=>{
@@ -677,7 +692,7 @@ function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
     weekDatesFrom(m).forEach(iso=>{
       const st=cell(iso);
       kids.push(<span key={iso} title={iso} style={{aspectRatio:"1",borderRadius:radius,background:GRASS_BG[st],
-        boxShadow:iso===today?"0 0 0 1.5px var(--ink)":"none"}}/>);
+        boxShadow:iso===today?"0 0 0 1.5px var(--label)":"none"}}/>);
     });
   });
   return(
@@ -689,29 +704,30 @@ function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
 }
 
 /* 회고 목록의 한 행 — 이름 + 연속 기록 | 최근 3주 잔디 · 누르면 상세 */
-function ItemRow({st,today,first,onOpen}){
+function ItemRow({st,today,onOpen}){
   const mon0=addDays(mondayOf(fromISO(today)),-14);
   const weeks=[0,1,2].map(i=>weekDatesFrom(addDays(mon0,i*7)));
   return(
-    <button className="btn row" onClick={onOpen} aria-label={`${st.h.name} 자세히 보기`}
-      style={{width:"100%",textAlign:"left",background:"transparent",border:"none",color:"inherit"}}>
-      <div style={{flex:1,minWidth:0}}>
-        <div className="row-title" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
-        <div className="row-meta">
-          <span>이번 주 {Math.min(st.wc,st.t)}/{st.t}</span>
-          {st.cur>0&&<span style={{color:"var(--acc)",fontWeight:600,marginLeft:8}}>{st.cur}{st.unit} 연속</span>}
+    <button className="btn cell tap" onClick={onOpen} aria-label={`${st.h.name} 자세히 보기`}>
+      <div className="cell-body">
+        <div className="cell-main">
+          <div className="cell-title" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
+          <div className="cell-sub">
+            이번 주 {Math.min(st.wc,st.t)}/{st.t}
+            {st.cur>0&&<span className="streak"><Icon name="flame" size={13}/>{st.cur}{st.unit} 연속</span>}
+          </div>
         </div>
+        <div aria-hidden="true" style={{display:"grid",gridTemplateColumns:`repeat(${DAYS.length},10px)`,gap:3,flex:"0 0 auto"}}>
+          {weeks.flat().map(iso=>{const k=st.cell(iso);return <span key={iso} style={{width:10,height:10,borderRadius:2.5,
+            background:GRASS_BG[k],boxShadow:iso===today?"0 0 0 1.5px var(--label)":"none"}}/>;})}
+        </div>
+        <span className="disclosure"><Chevron size={14}/></span>
       </div>
-      <div aria-hidden="true" style={{display:"grid",gridTemplateColumns:`repeat(${DAYS.length},11px)`,gap:3,flex:"0 0 auto"}}>
-        {weeks.flat().map(iso=>{const k=st.cell(iso);return <span key={iso} title={iso} style={{width:11,height:11,borderRadius:2,
-          background:GRASS_BG[k],boxShadow:iso===today?"0 0 0 1.5px var(--ink)":"none"}}/>;})}
-      </div>
-      <span aria-hidden="true" style={{fontSize:18,color:"var(--sub)",lineHeight:1,flex:"0 0 auto"}}>›</span>
     </button>
   );
 }
 
-/* ── 항목 상세 ── 잔디 · 통계 4개 · 월별 기록 */
+/* ── 루틴 상세 ── 잔디 · 통계 · 월별 기록 (iOS 푸시 화면처럼) */
 const PAGE_WEEKS=22;
 function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   const [page,setPage]=useState(0);
@@ -723,73 +739,60 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onClose]);
 
   const byMonth=[]; for(const iso of st.records){const k=iso.slice(0,7);let g=byMonth[byMonth.length-1];if(!g||g.k!==k){g={k,items:[]};byMonth.push(g);}g.items.push(iso);}
-  const tile=(label,big,foot,extra)=>(
-    <div className="card" style={{padding:"14px 16px",display:"flex",flexDirection:"column",minHeight:112}}>
-      <div style={{fontSize:12,color:"var(--sub)"}}>{label}</div>
-      <div className="mono" style={{fontSize:26,fontWeight:600,letterSpacing:"-0.01em",margin:"auto 0 4px"}}>{big}</div>
-      {extra}
-      <div style={{fontSize:12,color:"var(--sub)"}}>{foot}</div>
-    </div>
+  const row=(label,value,sub)=>(
+    <div className="cell"><div className="cell-body">
+      <div className="cell-main"><div className="cell-title">{label}</div>{sub&&<div className="cell-sub">{sub}</div>}</div>
+      <span className="cell-value num">{value}</span>
+    </div></div>
   );
   return(
     <div role="dialog" aria-modal="true" aria-label={`${st.h.name} 기록`} className="sheet">
-      <div className="wrap" style={{paddingTop:12}}>
-        <div style={{display:"grid",gridTemplateColumns:"36px 1fr 36px",alignItems:"center",gap:12,marginBottom:16}}>
-          <button className="btn icon" onClick={onClose} aria-label="뒤로">‹</button>
-          <div style={{textAlign:"center",minWidth:0}}>
-            <div style={{fontFamily:"var(--serif)",fontSize:19,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.h.name}</div>
-            <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>{freqLabel(st.h)}</div>
-          </div>
+      <header className="navbar scrolled" style={{position:"sticky"}}>
+        <div className="navbar-in">
+          <button className="btn back" onClick={onClose}><Chevron dir="l" size={22}/>회고</button>
+          <span className="nav-title">{st.h.name}</span>
           {isNotion
-            ? <a className="btn icon" href={`https://www.notion.so/${String(st.h.id).replace(/-/g,"")}`} aria-label="노션에서 수정"
-                target="_blank" rel="noopener noreferrer">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-              </a>
+            ? <a className="btn txt" style={{justifySelf:"end"}} href={`https://www.notion.so/${String(st.h.id).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer" aria-label="노션에서 편집">편집</a>
             : <span/>}
         </div>
-
-        <div className="card" style={{padding:"16px 16px 12px",marginBottom:12}}>
-          <Grass cell={st.cell} endISO={endISO} weeks={PAGE_WEEKS} today={today}/>
+      </header>
+      <div className="wrap" style={{paddingTop:8}}>
+        <div className="card">
+          <div className="card-head" style={{color:"var(--blue)"}}><Icon name="check" size={17}/>{freqLabel(st.h)}</div>
+          <div style={{marginTop:12}}><Grass cell={st.cell} endISO={endISO} weeks={PAGE_WEEKS} today={today}/></div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12}}>
-            <button className="btn icon" onClick={()=>setPage(p=>Math.min(maxPage,p+1))} disabled={page>=maxPage} aria-label="이전 기간">‹</button>
-            <span style={{fontSize:12,color:"var(--sub)"}}>{md(startISO)} — {md(endISO>today?today:endISO)}</span>
-            <button className="btn icon" onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} aria-label="다음 기간">›</button>
+            <button className="btn nav-ico" onClick={()=>setPage(p=>Math.min(maxPage,p+1))} disabled={page>=maxPage} aria-label="이전 기간"><Chevron dir="l"/></button>
+            <span style={{fontSize:13,color:"var(--label2)"}}>{md(startISO)} – {md(endISO>today?today:endISO)}</span>
+            <button className="btn nav-ico" onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} aria-label="다음 기간"><Chevron dir="r"/></button>
           </div>
-          {st.started&&!st.todayOn&&page===0&&
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginTop:12,paddingTop:12,borderTop:"1px solid var(--line)"}}>
-              <span style={{fontSize:13,color:"var(--sub)"}}>오늘 기록 없음</span>
-              <button className="btn primary" onClick={onCheckToday}>오늘 체크</button>
-            </div>}
         </div>
+        {st.started&&!st.todayOn&&page===0&&
+          <button className="btn filled" style={{width:"100%",marginTop:16}} onClick={onCheckToday}>오늘 체크하기</button>}
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:28}}>
-          {tile("연속",`${st.cur}${st.unit}`,`최고 ${st.best}${st.unit}`)}
-          {tile("총 체크",`${st.total}회`,`시작 ${md(st.startISO)}`)}
-          {tile("이번 주",`${Math.min(st.wc,st.t)}/${st.t}`,st.wc>=st.t?"목표 달성":`${st.t-st.wc}회 남음`,
-            <div className="bar" style={{marginBottom:8}}><div style={{width:`${st.weekPct*100}%`}}/></div>)}
-          {tile("주간 달성률",st.rate==null?"–":`${Math.round(st.rate*100)}%`,st.elig?`최근 ${st.elig}주 중 ${st.ok}주`:"지난 기록 없음")}
-        </div>
+        <section className="group" style={{marginTop:20}}>
+          <div className="cells">
+            {row("연속",`${st.cur}${st.unit}`,`최고 ${st.best}${st.unit}`)}
+            {row("총 체크",`${st.total}회`,`${md(st.startISO)} 시작`)}
+            {row("이번 주",`${Math.min(st.wc,st.t)}/${st.t}`,st.wc>=st.t?"목표 달성":`${st.t-st.wc}회 남음`)}
+            {row("주간 달성률",st.rate==null?"–":`${Math.round(st.rate*100)}%`,st.elig?`최근 ${st.elig}주 중 ${st.ok}주`:"지난 기록 없음")}
+          </div>
+        </section>
 
-        <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>기록</div>
         {byMonth.length===0
-          ? <div style={{fontSize:13,color:"var(--sub)"}}>아직 체크한 날이 없습니다</div>
+          ? <p className="group-foot" style={{marginTop:24}}>아직 체크한 날이 없어요.</p>
           : byMonth.slice(0,6).map(g=>{
               const [y,m]=g.k.split("-");
               return(
-                <div key={g.k} style={{marginBottom:16}}>
-                  <div style={{display:"flex",justifyContent:"space-between",margin:"0 2px 6px",fontSize:12,color:"var(--sub)"}}>
-                    <span>{y}년 {Number(m)}월</span><span className="mono">{g.items.length}회</span>
+                <section key={g.k} className="group">
+                  <div className="group-head small"><h2>{y}년 {Number(m)}월</h2><span className="group-side num">{g.items.length}회</span></div>
+                  <div className="cells">
+                    {g.items.map(iso=>{const d=fromISO(iso);return(
+                      <div key={iso} className="cell"><div className="cell-body">
+                        <span className="cell-title">{d.getMonth()+1}월 {d.getDate()}일</span>
+                        <span className="cell-value">{wdOf(iso)}요일</span>
+                      </div></div>);})}
                   </div>
-                  <div className="card" style={{padding:"0 16px"}}>
-                    {g.items.map((iso,i)=>{const d=fromISO(iso);return(
-                      <div key={iso} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontSize:14,
-                        borderTop:i?"1px solid var(--line)":"none"}}>
-                        <span>{d.getMonth()+1}월 {d.getDate()}일</span>
-                        <span style={{color:"var(--sub)"}}>{wdOf(iso)}요일</span>
-                      </div>);})}
-                  </div>
-                </div>
+                </section>
               );
             })}
       </div>
@@ -797,21 +800,8 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   );
 }
 
-/* ── 오늘 할 일 ── 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래 줄에서 새로 추가 */
-const PRI_COLOR={핵심:"var(--neg)",높음:"var(--ink)"};
-
-/* 체크 칸 — 잉크로 채운 네모 */
-function Check({on}){
-  return <span className={"chk"+(on?" on":"")} aria-hidden="true">
-    {on&&<svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 6.2 5 8.6 9.6 3.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-  </span>;
-}
-/* 이번 주 집계 칸 — 목표 횟수만큼 칸, 체크한 만큼 채움 */
-function Tally({n,of}){
-  return <span className="tally" role="img" aria-label={`이번 주 ${Math.min(n,of)}/${of}`}>
-    {Array.from({length:of},(_,i)=><i key={i} className={i<n?"on":undefined}/>)}
-  </span>;
-}
+/* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
+const PRI_MARK={핵심:"!!!",높음:"!!",보통:"!"};
 function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
   const [draft,setDraft]=useState("");
   const [edit,setEdit]=useState(null);   // { id, text }
@@ -823,97 +813,113 @@ function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
     setEdit(null);
   };
   const done=tasks.filter(t=>t.done).length;
-  return(<>
-    <div className="sec">
-      <span>{title}</span>
-      {tasks.length>0&&<span className="sec-side"><span className="mono"><b>{done}</b> / {tasks.length}</span></span>}
-    </div>
-    <div className="list">
-      {err&&<div className="notice" style={{margin:"10px 0"}}>{err}</div>}
-      {tasks.map((t,i)=>(
-        <div key={t.id} className="row" style={{cursor:"default"}}>
-          <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="chk-hit"
-            onClick={()=>onToggle(t)}
-            onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}><Check on={t.done}/></span>
-          {edit?.id===t.id
-            ? <input className="task-in" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
-                onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
-                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
-            : <button className="btn task-title" onClick={()=>setEdit({id:t.id,text:t.title})}><span className={t.done?"hl":undefined}>{t.title}</span></button>}
-          {t.priority&&<span className="pri" style={{color:PRI_COLOR[t.priority]||"var(--sub)"}}>{t.priority}</span>}
-        </div>
-      ))}
-      <div className="row add-row" style={{cursor:"text"}}>
-        <span aria-hidden="true" className="plus">+</span>
-        <input className="task-in" value={draft} maxLength={200} placeholder={tasks.length?"할 일 추가":"이날 마감인 할 일이 없어요. 여기에 추가하세요"}
-          aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
-          onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
-        {draft.trim()&&<button className="btn primary" onClick={add}>추가</button>}
+  return(
+    <section className="group">
+      <div className="group-head">
+        <h2>{title}</h2>
+        {tasks.length>0&&<span className="group-side num">{done}/{tasks.length}</span>}
       </div>
-    </div>
-  </>);
+      {err&&<div className="banner" style={{margin:"0 0 8px"}}>{err}</div>}
+      <div className="cells">
+        {tasks.map(t=>(
+          <div key={t.id} className="cell">
+            <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="hit"
+              onClick={()=>onToggle(t)}
+              onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}><Circle on={t.done}/></span>
+            <div className="cell-body">
+              {edit?.id===t.id
+                ? <input className="cell-input" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
+                    onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
+                    onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
+                : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>
+                    {PRI_MARK[t.priority]&&<span className="pri" aria-label={`우선순위 ${t.priority}`}>{PRI_MARK[t.priority]} </span>}{t.title}
+                  </button>}
+            </div>
+          </div>
+        ))}
+        <div className="cell">
+          <span className="add-ico" aria-hidden="true"/>
+          <div className="cell-body">
+            <input className="cell-input" value={draft} maxLength={200} placeholder="새로운 할 일"
+              aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
+            {draft.trim()&&<button className="btn txt strong" onClick={add}>추가</button>}
+          </div>
+        </div>
+      </div>
+      {tasks.length===0&&!err&&<p className="group-foot">이날 마감인 할 일이 없어요. 노션 과업 목록과 함께 맞춰져요.</p>}
+    </section>
+  );
 }
 
-/* ── 하루 평가 ── 접힌 상태: 박스 버튼 / 펼친 상태: 별 5개 */
+/* ── 하루 평가 ── 접힌 상태: 한 줄 / 펼친 상태: 별 5개 */
 function RatingCard({score,open,onToggle,onRate}){
   return(
-    <div className="card rate" style={{marginBottom:12,overflow:"hidden"}}>
-      <button className="btn rate-head" onClick={onToggle} aria-expanded={open}>
-        <span>하루 평가하기</span>
-        <span style={{display:"flex",alignItems:"center",gap:8}}>
-          {!open&&score>0&&<Stars n={score} size={13}/>}
-          <span aria-hidden="true" style={{color:"var(--sub)",transform:open?"rotate(90deg)":"none",transition:"transform .15s"}}>›</span>
-        </span>
-      </button>
-      {open&&
-        <div role="radiogroup" aria-label="하루 평가" className="fade" style={{padding:"2px 12px 16px",display:"flex",gap:2}}>
-          {[1,2,3,4,5].map(n=>(
-            <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
-              onClick={()=>onRate(n)}><StarSvg size={34}/></button>
-          ))}
-        </div>}
-    </div>
+    <section className="group">
+      <div className="cells">
+        <button className="btn cell tap" onClick={onToggle} aria-expanded={open}>
+          <span className="lead-ico" style={{background:"var(--orange)"}}><Icon name="star" size={16}/></span>
+          <div className="cell-body">
+            <span className="cell-title">하루 평가하기</span>
+            <span style={{display:"flex",alignItems:"center",gap:8}}>
+              {!open&&score>0&&<Stars n={score} size={13}/>}
+              <span className="disclosure" style={{transform:open?"rotate(90deg)":"none"}}><Chevron size={14}/></span>
+            </span>
+          </div>
+        </button>
+        {open&&
+          <div className="cell" style={{cursor:"default"}}>
+            <div className="cell-body" style={{justifyContent:"center",padding:"10px 0 14px"}}>
+              <div role="radiogroup" aria-label="하루 평가" style={{display:"flex",gap:6}}>
+                {[1,2,3,4,5].map(n=>(
+                  <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
+                    onClick={()=>onRate(n)}><StarSvg size={36}/></button>
+                ))}
+              </div>
+            </div>
+          </div>}
+      </div>
+    </section>
   );
 }
 const STAR="M12 2.8l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.6l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z";
 function StarSvg({size=20}){
-  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={STAR} strokeWidth="1.3" strokeLinejoin="round"/></svg>;
+  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={STAR} strokeWidth="1.4" strokeLinejoin="round"/></svg>;
 }
 function Stars({n,size=13}){
   return <span className="stars" role="img" aria-label={`${n}점`}>
     {[1,2,3,4,5].map(i=><span key={i} className={i<=n?"on":undefined}><StarSvg size={size}/></span>)}</span>;
 }
 
-/* ── 하루 평점 추이 ── 최근 4주 평일 막대 (높이 = 점수) + 주간 평균 */
+/* ── 하루 평점 추이 ── 최근 4주 평일 막대 (높이 = 점수) + 이번 주 평균 */
 function RatingTrend({ratings,today}){
   const curMon=mondayOf(fromISO(today));
   const weeks=[3,2,1,0].map(i=>weekDatesFrom(addDays(curMon,-7*i)));
   const avg=(ds)=>{const v=ds.map(d=>ratings[d]).filter(Boolean);return v.length?(v.reduce((a,b)=>a+b,0)/v.length):null;};
   const cur=avg(weeks[3]), prev=avg(weeks[2]);
   const f=(v)=>v==null?"–":v.toFixed(1);
-  const W=560,H=64,G=18,BW=(W-G*3)/20-6;
+  const W=560,H=72,G=18,BW=(W-G*3)/20-6;
   return(
-    <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
-      <div className="panel-head">
-        <span>하루 평점 추이</span>
-        <span className="mono">평균 이번 주 <b>{f(cur)}</b>, 지난주 {f(prev)}</span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",marginTop:12}} aria-hidden="true">
+    <div className="card">
+      <div className="card-head" style={{color:"var(--orange)"}}><Icon name="star" size={16}/>하루 평점</div>
+      <div className="value"><span className="num">{f(cur)}</span><small>이번 주 평균</small></div>
+      <p className="card-note">지난주 평균 {f(prev)}</p>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",marginTop:14}} aria-hidden="true">
         {weeks.map((ds,wi)=>ds.map((d,di)=>{
-          const x=wi*((W-G*3)/4+G)+di*((W-G*3)/20)+3, v=ratings[d]||0, h=v?Math.max(4,(H-2)*v/5):3;
-          return <rect key={d} x={x} y={H-h} width={BW} height={h} rx="2"
-            fill={d>today?"transparent":v?"var(--acc)":"var(--cell)"} opacity={v?.4+v*.12:1}><title>{`${d} ${v?v+"점":"기록 없음"}`}</title></rect>;
+          const x=wi*((W-G*3)/4+G)+di*((W-G*3)/20)+3, v=ratings[d]||0, h=v?Math.max(5,(H-2)*v/5):4;
+          return <rect key={d} x={x} y={H-h} width={BW} height={h} rx="3"
+            fill={d>today?"transparent":v?"var(--orange)":"var(--fill)"}><title>{`${d} ${v?v+"점":"기록 없음"}`}</title></rect>;
         }))}
       </svg>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",columnGap:G/W*100+"%",marginTop:6,fontSize:11,color:"var(--sub)"}}>
-        {weeks.map((ds,i)=><span key={i} style={{textAlign:"center"}}>{i===3?"이번 주":`${fromISO(ds[0]).getMonth()+1}/${fromISO(ds[0]).getDate()}`}</span>)}
+      <div className="axis" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",columnGap:G/W*100+"%"}}>
+        {weeks.map((ds,i)=><span key={i} className={i===3?"on":undefined}>{i===3?"이번 주":`${fromISO(ds[0]).getMonth()+1}/${fromISO(ds[0]).getDate()}`}</span>)}
       </div>
     </div>
   );
 }
 
 /* ── 레슨런 ── 그날 일하며 배운 점을 한 줄로 남기고, 주차별로 모아 봄 */
-function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDelete}){
+function LessonsTab({selDate,dayLabel,today,lessons,note,onAdd,onDelete}){
   const [draft,setDraft]=useState("");
   const [saving,setSaving]=useState(false);
   const [menu,setMenu]=useState(null);   // 열린 ⋯ 메뉴의 레슨런 id
@@ -939,172 +945,184 @@ function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDel
   const curK=toISO(mondayOf(fromISO(today)));
   return(
     <div className="fade">
-      {dateStepper}
-      <div className="card" style={{padding:"12px 14px",margin:"22px 0 8px"}}>
-        <textarea className="ta" rows={3} maxLength={500} value={draft} onChange={e=>setDraft(e.target.value)}
-          onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}}}
-          placeholder="배운 점, 다음에 다르게 할 점을 한 줄로" aria-label="레슨런 내용"/>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
-          <span style={{fontSize:13,color:"var(--sub)"}}>{dayLabel} 레슨런으로 저장</span>
-          <button className="btn primary" disabled={!draft.trim()||saving} onClick={save}>{saving?"저장 중…":"저장"}</button>
-        </div>
-      </div>
-      {note&&<div className="notice" style={{marginTop:0,marginBottom:12}}>{note}</div>}
-      {groups.length===0
-        ? <div style={{fontSize:14,color:"var(--sub)",padding:"20px 0"}}>아직 레슨런이 없어요. 오늘 배운 점을 한 줄로 남겨 보세요.</div>
-        : groups.map(g=>{const wk=weekOfMonth(g.k);return(
-            <div key={g.k}>
-              <div className="sec">
-                <span>{g.k===curK?"이번 주":`${wk.m}월 ${wk.w}주차`}</span><span className="sec-side mono">{g.items.length}개</span>
+      <section className="group">
+        <div className="cells">
+          <div className="cell" style={{cursor:"text"}}>
+            <div className="cell-body" style={{flexDirection:"column",alignItems:"stretch",gap:6}}>
+              <textarea className="ta" rows={3} maxLength={500} value={draft} onChange={e=>setDraft(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}}}
+                placeholder="배운 점, 다음에 다르게 할 점" aria-label="레슨런 내용"/>
+              <div style={{display:"flex",justifyContent:"flex-end"}}>
+                <button className="btn txt strong" disabled={!draft.trim()||saving} onClick={save}>{saving?"저장 중":"저장"}</button>
               </div>
-              <div className="list">
-                {g.items.map((l,i)=>{const d=fromISO(l.date);return(
-                  <div key={l.id} className="lesson">
-                    <div style={{flex:1,minWidth:0}}>
-                      <div className="lesson-text">{l.text}</div>
-                      <div className="row-meta">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
-                    </div>
-                    <div style={{position:"relative",flex:"0 0 auto"}}>
-                      <button className="btn more" aria-label="더보기" aria-haspopup="menu" aria-expanded={menu===l.id}
-                        onClick={e=>{e.stopPropagation();setMenu(m=>m===l.id?null:l.id);}}>⋯</button>
-                      {menu===l.id&&
-                        <div role="menu" className="menu" onClick={e=>e.stopPropagation()}>
-                          <button role="menuitem" className="btn" onClick={()=>{setMenu(null);onDelete(l.id);}}>삭제</button>
-                        </div>}
+            </div>
+          </div>
+        </div>
+        <p className="group-foot">{dayLabel} 레슨런으로 저장돼요.</p>
+      </section>
+      {note&&<div className="banner">{note}</div>}
+      {groups.length===0
+        ? <p className="group-foot">아직 레슨런이 없어요. 오늘 배운 점을 한 줄로 남겨 보세요.</p>
+        : groups.map(g=>{const wk=weekOfMonth(g.k);return(
+            <section key={g.k} className="group">
+              <div className="group-head small"><h2>{g.k===curK?"이번 주":`${wk.m}월 ${wk.w}주차`}</h2><span className="group-side num">{g.items.length}개</span></div>
+              <div className="cells">
+                {g.items.map(l=>{const d=fromISO(l.date);return(
+                  <div key={l.id} className="cell" style={{cursor:"default",alignItems:"flex-start"}}>
+                    <div className="cell-body" style={{alignItems:"flex-start"}}>
+                      <div className="cell-main">
+                        <div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.text}</div>
+                        <div className="cell-sub">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
+                      </div>
+                      <div style={{position:"relative",flex:"0 0 auto"}}>
+                        <button className="btn more" aria-label="더보기" aria-haspopup="menu" aria-expanded={menu===l.id}
+                          onClick={e=>{e.stopPropagation();setMenu(m=>m===l.id?null:l.id);}}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="7.6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="16.4" cy="12" r="1.3" fill="currentColor"/></svg>
+                        </button>
+                        {menu===l.id&&
+                          <div role="menu" className="menu" onClick={e=>e.stopPropagation()}>
+                            <button role="menuitem" className="btn" onClick={()=>{setMenu(null);onDelete(l.id);}}>삭제</button>
+                          </div>}
+                      </div>
                     </div>
                   </div>);})}
               </div>
-            </div>);})}
+            </section>);})}
     </div>
   );
 }
 
 const CSS=`
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@600&display=swap');
-  /* 형광펜 업무 일지 — 회녹색 종이, 잉크, 완료한 줄에만 형광펜. 데이터는 올리브 */
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+  /* Apple 시스템 앱 — iOS 시스템 색·SF 글꼴(Apple 기기), 그 외 기기는 Pretendard */
   :root{
-    --bg:#F2F3EE;--surface:#FBFBF8;--ink:#1D2420;--sub:#6B736D;--line:#DADDD4;
-    --acc:#556B10;--acc-rgb:85,107,16;--on-acc:#FBFBF8;--neg:#B5462F;
-    --hl:#E5F36B;
-    --cell:#E3E6DC;--cell-pre:#ECEDE7;--notice-bg:#F4ECCF;--notice-ink:#6A5110;
-    --serif:'Noto Serif KR',ui-serif,serif;--sans:'IBM Plex Sans KR',ui-sans-serif,system-ui,sans-serif;
+    --bg:#F2F2F7;--cell:#FFFFFF;--label:#000000;--label2:rgba(60,60,67,.6);--label3:rgba(60,60,67,.3);
+    --sep:rgba(60,60,67,.29);--fill:rgba(120,120,128,.16);--fill2:rgba(120,120,128,.08);--gray2:#AEAEB2;--gray3:#C7C7CC;
+    --blue:#007AFF;--blue-rgb:0,122,255;--green:#34C759;--orange:#FF9500;--red:#FF3B30;--purple:#AF52DE;
+    --bar:rgba(249,249,249,.86);--banner:#FFF4E0;--banner-ink:#9A5B00;
     color-scheme:light;
   }
   @media(prefers-color-scheme:dark){:root{
-    --bg:#151916;--surface:#1C211D;--ink:#E3E7E0;--sub:#9AA39C;--line:#2E3530;
-    --acc:#B4CC50;--acc-rgb:180,204,80;--on-acc:#151916;--neg:#E08A70;
-    --hl:rgba(200,219,69,.42);
-    --cell:#272D28;--cell-pre:#1F2520;--notice-bg:#2C2816;--notice-ink:#E3CF85;
+    --bg:#000000;--cell:#1C1C1E;--label:#FFFFFF;--label2:rgba(235,235,245,.6);--label3:rgba(235,235,245,.3);
+    --sep:rgba(84,84,88,.65);--fill:rgba(120,120,128,.32);--fill2:rgba(120,120,128,.16);--gray2:#636366;--gray3:#48484A;
+    --blue:#0A84FF;--blue-rgb:10,132,255;--green:#30D158;--orange:#FF9F0A;--red:#FF453A;--purple:#BF5AF2;
+    --bar:rgba(22,22,24,.82);--banner:#2E2310;--banner-ink:#FFC56B;
     color-scheme:dark;
   }}
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);max-width:100%;overflow-x:clip}
-  .app{min-height:100vh;color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
-  .mono{font-variant-numeric:tabular-nums}
-  button,input,select,textarea{font-family:inherit;color:inherit}
-  .wrap{max-width:560px;margin:0 auto;padding:0 20px 72px}
+  .app{min-height:100vh;color:var(--label);font-size:17px;line-height:1.3;letter-spacing:-0.01em;-webkit-font-smoothing:antialiased;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Apple SD Gothic Neo","Pretendard",system-ui,sans-serif}
+  .num{font-variant-numeric:tabular-nums}
+  button,input,textarea{font-family:inherit;color:inherit;letter-spacing:inherit}
+  .wrap{max-width:600px;margin:0 auto;padding:0 16px calc(96px + env(safe-area-inset-bottom))}
 
-  /* 머리 — 이름은 조용히, 선택한 탭에만 형광펜 */
-  .navbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:14px 0 10px}
-  .brand{font-size:15px;font-weight:600;margin:0}
-  .tabs{display:flex;gap:20px}
-  .tabs .btn{position:relative;isolation:isolate;background:none;border:none;padding:6px 1px;font-size:15px;font-weight:500;color:var(--sub)}
-  .tabs .btn.on{color:var(--ink);font-weight:600}
-  .tabs .btn.on::after{content:"";position:absolute;left:-3px;right:-3px;top:46%;bottom:16%;background:var(--hl);z-index:-1;border-radius:1px}
+  /* 위쪽 막대 — 처음엔 투명, 스크롤하면 반투명 + 작은 제목 + 가는 선 */
+  .navbar{position:sticky;top:0;z-index:20;padding-top:env(safe-area-inset-top);transition:background .2s}
+  .navbar-in{max-width:600px;margin:0 auto;height:44px;padding:0 8px 0 16px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
+  .navbar.scrolled{background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);box-shadow:0 .5px 0 var(--sep)}
+  .nav-title{font-size:17px;font-weight:600;opacity:0;transition:opacity .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56vw}
+  .navbar.scrolled .nav-title{opacity:1}
+  .nav-actions{display:flex;align-items:center;gap:2px}
+  .large-title{font-size:34px;font-weight:700;letter-spacing:.01em;line-height:1.2;margin:2px 0 0}
+  .subtitle{font-size:15px;color:var(--label2);margin:2px 0 0}
 
-  /* 날짜 머리말 */
-  .pagehead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:14px 0 4px}
-  .date{font-family:var(--serif);font-weight:600;font-size:34px;line-height:1.15;letter-spacing:-0.01em;margin:0}
-  .meta{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:14px;color:var(--sub)}
-  .steps{display:flex;gap:6px;padding-bottom:4px}
+  .btn{cursor:pointer;-webkit-tap-highlight-color:transparent;border:none;background:none;padding:0}
+  .btn:disabled{opacity:.3;cursor:default}
+  .btn.txt{color:var(--blue);font-size:17px;padding:6px 8px;text-decoration:none}
+  .btn.txt.strong{font-weight:600}
+  .group-side .btn.txt{font-size:15px;padding:0 0 0 12px}
+  .btn.nav-ico{color:var(--blue);width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:18px}
+  .btn.back{display:flex;align-items:center;gap:0;color:var(--blue);font-size:17px;margin-left:-10px;justify-self:start}
+  .btn.filled{background:var(--blue);color:#fff;font-size:17px;font-weight:600;border-radius:12px;padding:14px 16px}
+  .btn:focus-visible,.hit:focus-visible,.cell.tap:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}
 
-  /* 구역 제목 + 잉크 괘선 아래 목록 */
-  .sec{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:30px 0 0;padding-bottom:8px;border-bottom:1.5px solid var(--ink)}
-  .sec>span:first-child{font-size:15px;font-weight:600}
-  .sec-side{display:flex;align-items:baseline;gap:12px;font-size:13px;color:var(--sub)}
-  .sec-side b{color:var(--ink);font-weight:600}
-  .list>*{border-bottom:1px solid var(--line)}
-  .row{display:flex;align-items:center;gap:14px;padding:13px 2px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;font-family:inherit}
-  .row:hover{background:rgba(var(--acc-rgb),.05)}
-  .row-title{font-size:15px;font-weight:500;word-break:keep-all}
-  .row-meta{font-size:13px;color:var(--sub);margin-top:2px;font-variant-numeric:tabular-nums}
-  .btn.row{font-size:inherit}
+  .banner{background:var(--banner);color:var(--banner-ink);border-radius:10px;padding:12px 16px;font-size:15px;line-height:1.4;margin-top:14px}
 
-  /* 형광펜 — 완료하면 왼쪽에서 오른쪽으로 그어짐 */
-  .hl{background:linear-gradient(transparent 42%,var(--hl) 42%,var(--hl) 94%,transparent 94%) no-repeat 0 0/100% 100%;
-    -webkit-box-decoration-break:clone;box-decoration-break:clone;padding:0 2px;margin:0 -2px;animation:swipe .32s cubic-bezier(.3,.7,.3,1)}
-  @keyframes swipe{from{background-size:0 100%}}
+  /* 인셋 그룹 목록 */
+  .group{margin-top:26px}
+  .group-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:0 4px 8px 4px}
+  .group-head h2{font-size:22px;font-weight:700;margin:0;letter-spacing:.01em}
+  .group-head.small{padding:0 16px 6px}
+  .group-head.small h2{font-size:15px;font-weight:400;color:var(--label2)}
+  .group-side{display:flex;align-items:baseline;font-size:15px;color:var(--label2)}
+  .group-foot{font-size:13px;color:var(--label2);margin:8px 16px 0;line-height:1.4}
+  .cells{background:var(--cell);border-radius:10px;overflow:hidden}
+  .cell{display:flex;align-items:center;gap:12px;width:100%;padding-left:16px;text-align:left;color:inherit;font-size:17px;min-height:44px;position:relative}
+  .cell.tap{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+  .cell.tap:active{background:var(--fill2)}
+  .cell-body{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px 11px 0;
+    box-shadow:inset 0 -.5px 0 var(--sep)}
+  .cell:last-child>.cell-body{box-shadow:none}
+  .cell-main{flex:1;min-width:0}
+  .cell-title{font-size:17px;word-break:keep-all;line-height:1.3}
+  .cell-title.done{color:var(--label2)}
+  .cell-sub{font-size:15px;color:var(--label2);margin-top:2px;display:flex;align-items:center;gap:8px}
+  .cell-value{font-size:17px;color:var(--label2);flex:0 0 auto}
+  .cell-value.met{color:var(--blue)}
+  .cell-input{flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:17px;padding:0}
+  .cell-input::placeholder,.ta::placeholder{color:var(--label3)}
+  .btn.cell-title.edit{flex:1;text-align:left;cursor:text}
+  .pri{color:var(--blue);font-weight:600}
+  .disclosure{color:var(--gray3);display:flex;transition:transform .2s}
+  .streak{display:inline-flex;align-items:center;gap:2px;color:var(--orange)}
+  .lead-ico{width:29px;height:29px;border-radius:7px;color:#fff;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .add-ico{width:24px;height:24px;border-radius:50%;background:var(--blue);flex:0 0 auto;position:relative}
+  .add-ico::before,.add-ico::after{content:"";position:absolute;left:50%;top:50%;background:#fff;border-radius:1px;transform:translate(-50%,-50%)}
+  .add-ico::before{width:12px;height:2px}.add-ico::after{width:2px;height:12px}
 
-  .chk{width:20px;height:20px;border-radius:4px;flex:0 0 auto;border:1.5px solid var(--ink);display:flex;align-items:center;justify-content:center;
-    color:var(--bg);transition:background .12s}
-  .chk.on{background:var(--ink)}
-  .chk-hit{display:flex;padding:4px;margin:-4px;cursor:pointer;border-radius:6px}
-  .tally{display:flex;gap:3px;flex:0 0 auto}
-  .tally i{width:7px;height:16px;border-radius:1.5px;background:var(--cell)}
-  .tally i.on{background:var(--acc)}
+  /* 미리 알림 같은 둥근 체크 */
+  .hit{display:flex;padding:8px;margin:-8px;cursor:pointer;border-radius:50%}
+  .circle{width:24px;height:24px;border-radius:50%;border:1.5px solid var(--gray3);flex:0 0 auto;display:flex;align-items:center;justify-content:center;transition:border-color .15s}
+  .circle.on{border-color:var(--blue)}
+  .circle.on::after{content:"";width:15px;height:15px;border-radius:50%;background:var(--blue);animation:pop .22s cubic-bezier(.3,1.5,.6,1)}
+  @keyframes pop{from{transform:scale(.3)}}
 
-  .task-title{flex:1;min-width:0;text-align:left;background:none;border:none;padding:0;font-size:15px;font-weight:500;word-break:keep-all;cursor:text}
-  .task-in{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--ink);font-size:15px;padding:2px 0}
-  .task-in::placeholder{color:var(--sub)}
-  .plus{width:20px;text-align:center;color:var(--sub);font-size:20px;line-height:1;flex:0 0 auto}
-  .pri{font-size:12px;font-weight:600;flex:0 0 auto}
+  /* 요약 카드 (건강 앱처럼) */
+  .card{background:var(--cell);border-radius:12px;padding:14px 16px 16px;margin-top:16px}
+  .card-head{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600}
+  .value{display:flex;align-items:baseline;gap:4px;margin-top:10px}
+  .value .num{font-family:ui-rounded,"SF Pro Rounded",-apple-system,"Pretendard",sans-serif;font-size:34px;font-weight:700;line-height:1}
+  .value small{font-size:15px;font-weight:600;color:var(--label2)}
+  .card-rows{margin:14px -16px -16px 0;padding-left:0}
+  .card-rows>div{display:flex;justify-content:space-between;gap:12px;padding:11px 16px 11px 0;font-size:15px;box-shadow:inset 0 .5px 0 var(--sep)}
+  .card-rows>div>span:last-child{color:var(--label2)}
+  .card-note{font-size:15px;color:var(--label2);margin:6px 0 0;line-height:1.35}
+  .axis{display:flex;justify-content:space-between;font-size:12px;color:var(--label2)}
+  .axis>span{width:0;display:flex;justify-content:center;white-space:nowrap}
+  .axis[style*="grid"]>span{width:auto}
+  .axis .on{color:var(--label);font-weight:600}
+  .mini-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .mini-list li{display:flex;gap:12px;font-size:16px;line-height:1.4;word-break:keep-all;white-space:pre-wrap}
+  .mini-list li span{color:var(--label2);font-size:15px;flex:0 0 auto}
+  .tip{position:absolute;top:0;z-index:2;pointer-events:none;white-space:nowrap;background:var(--cell);border-radius:10px;padding:8px 12px;
+    font-size:13px;line-height:1.5;box-shadow:0 4px 20px rgba(0,0,0,.16)}
 
-  /* 상자 — 따로 하는 행동(평가·쓰기)과 회고 묶음에만 */
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:6px}
-  .panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px;color:var(--sub)}
-  .panel-head>span:first-child{font-size:15px;font-weight:600;color:var(--ink)}
-  .panel-head b{color:var(--ink);font-weight:600}
-  .lead{font-family:var(--serif);font-weight:600;font-size:22px;line-height:1.4;margin:0;word-break:keep-all}
-
-  .rate{margin-top:24px}
-  .rate-head{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;padding:15px 16px;
-    background:none;border:none;color:var(--ink);font-size:15px;font-weight:600;text-align:left}
-  .btn.star{border:none;background:none;padding:4px;line-height:0;border-radius:6px}
-  .btn.star path,.stars path{fill:none;stroke:var(--sub)}
-  .btn.star.on path,.stars .on path{fill:var(--hl);stroke:var(--ink)}
-  .btn.star:active svg{transform:scale(.9)}
+  .btn.star{line-height:0;padding:2px}
+  .btn.star path,.stars path{fill:var(--fill);stroke:none}
+  .btn.star.on path,.stars .on path{fill:var(--orange)}
+  .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
 
-  .lesson{display:flex;align-items:flex-start;gap:8px;padding:13px 0 13px 2px}
-  .lesson-text{font-size:15px;line-height:1.6;white-space:pre-wrap;word-break:keep-all}
-  .lessons-mini{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
-  .lessons-mini li{display:flex;gap:12px;font-size:15px;line-height:1.55;word-break:keep-all;white-space:pre-wrap}
-  .lessons-mini li span{color:var(--sub);font-size:13px;flex:0 0 auto;padding-top:2px}
-  .ta{width:100%;resize:none;line-height:1.6;font-size:15px;border:none;outline:none;background:transparent;padding:2px 0}
-  .ta::placeholder{color:var(--sub)}
+  .ta{width:100%;resize:none;border:none;outline:none;background:transparent;font-size:17px;line-height:1.4;padding:0}
+  .btn.more{color:var(--label3);width:32px;height:32px;display:flex;align-items:center;justify-content:center;margin:-6px -4px 0 0}
+  .menu{position:absolute;right:0;top:32px;z-index:5;min-width:140px;background:var(--bar);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);
+    border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.18);overflow:hidden}
+  .menu .btn{display:block;width:100%;text-align:left;color:var(--red);font-size:17px;padding:11px 16px}
 
-  .btn{cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,opacity .15s}
-  .btn:disabled{opacity:.3;cursor:default}
-  .btn.icon{width:34px;height:34px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--line);
-    border-radius:6px;background:transparent;color:var(--ink);font-size:18px;line-height:1;text-decoration:none}
-  .btn.icon:hover:not(:disabled){background:var(--surface)}
-  .btn.primary{background:var(--ink);color:var(--bg);border:none;border-radius:6px;padding:8px 14px;font-size:14px;font-weight:600}
-  .btn.more{border:none;background:none;color:var(--sub);font-size:20px;line-height:1;width:32px;height:32px;border-radius:6px;letter-spacing:1px}
-  .btn.more:hover,.btn.more[aria-expanded=true]{background:var(--cell)}
-  .menu{position:absolute;right:0;top:34px;z-index:5;min-width:96px;background:var(--surface);border:1px solid var(--line);border-radius:6px;
-    padding:4px;box-shadow:0 8px 24px rgba(29,36,32,.14)}
-  .menu .btn{display:block;width:100%;text-align:left;border:none;background:none;color:var(--neg);font-size:14px;padding:8px 10px;border-radius:4px}
-  .menu .btn:hover{background:var(--cell)}
-  .link{background:none;border:none;padding:0;color:var(--acc);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
-  .row:focus-visible,.btn:focus-visible,.chk-hit:focus-visible,.link:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+  /* 아래 탭 막대 */
+  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;gap:0;
+    padding:6px 0 calc(4px + env(safe-area-inset-bottom));background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
+    box-shadow:0 -.5px 0 var(--sep)}
+  .tab{flex:0 1 160px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--gray2);font-size:10px;font-weight:500;letter-spacing:0;padding:2px 0}
+  .tab.on{color:var(--blue)}
 
-  .notice{margin-top:10px;background:var(--notice-bg);color:var(--notice-ink);border-radius:6px;padding:12px 14px;font-size:14px;line-height:1.55}
-  .bar{height:5px;border-radius:2px;background:var(--cell);overflow:hidden}
-  .bar>div{height:100%;background:var(--acc);transition:width .3s ease}
-  .kv{display:flex;flex-direction:column;border-top:1px solid var(--line)}
-  .kv>div{display:flex;justify-content:space-between;gap:12px;padding:10px 0 0;font-size:14px}
-  .kv span{color:var(--sub)}
-  .kv b{font-weight:600}
-  .lg{display:inline-block;width:14px;height:2px;border-radius:1px}
-  .lg.dash{background:repeating-linear-gradient(90deg,var(--sub) 0 4px,transparent 4px 7px)}
-  .tip{position:absolute;top:0;z-index:2;pointer-events:none;white-space:nowrap;background:var(--surface);border:1px solid var(--line);
-    border-radius:6px;padding:8px 10px;font-size:13px;line-height:1.6;box-shadow:0 6px 18px rgba(29,36,32,.12)}
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg)}
-  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
-    background:var(--ink);color:var(--bg);border-radius:6px;padding:10px 14px;font-size:14px;line-height:1.5}
-  .sk{border-radius:4px;background:var(--cell);animation:sk 1.4s ease-in-out infinite}
-  @keyframes sk{0%,100%{opacity:1}50%{opacity:.55}}
-  .fade{animation:fade .18s ease}
+  .toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
+    background:rgba(30,30,32,.92);color:#fff;border-radius:14px;padding:12px 16px;font-size:15px;line-height:1.4;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+  .sk{border-radius:6px;background:var(--fill);animation:sk 1.4s ease-in-out infinite}
+  @keyframes sk{0%,100%{opacity:1}50%{opacity:.5}}
+  .fade{animation:fade .2s ease}
   @keyframes fade{from{opacity:0}to{opacity:1}}
-  @media(prefers-reduced-motion:reduce){.fade,.sk,.hl{animation:none}}
+  @media(prefers-reduced-motion:reduce){.fade,.sk,.circle.on::after{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
 `;
