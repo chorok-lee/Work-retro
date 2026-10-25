@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
    할 일(업무 루틴)마다 주간 목표 횟수를 두고, 날짜별로 체크합니다.
-   [할 일] 탭: 날짜별 체크  ·  [레슨런] 탭: 그날 배운 점 한 줄
+   [할 일] 탭: 날짜별 체크, 하루 평점  ·  [레슨런] 탭: 그날 배운 점 한 줄
    [회고] 탭: 지난주 대비 페이스, 이번 주 레슨런, 할 일별 기록
 ──────────────────────────────────────────────────────────── */
 
@@ -104,6 +104,14 @@ export default function App(){
   const [lessonNote,setLessonNote]=useState("");
   const lessonModeRef=useRef(lessonMode); lessonModeRef.current=lessonMode;
 
+  /* 하루 평점 { "YYYY-MM-DD": 1~5 } — 노션 하루 평점 DB, 연결 안 되면 이 기기에 저장 */
+  const [ratings,setRatings]=useState(()=>cache0?.ratings&&typeof cache0.ratings==="object"?cache0.ratings:{});
+  const [ratingMode,setRatingMode]=useState(cache0?.ratings?"notion":"loading");
+  const ratingModeRef=useRef(ratingMode); ratingModeRef.current=ratingMode;
+  /* 저녁 6시~자정에는 평점 모듈을 펼쳐 둡니다 — 시각이 바뀌는 걸 1분마다 확인 */
+  const [hour,setHour]=useState(()=>new Date().getHours());
+  useEffect(()=>{const t=setInterval(()=>setHour(new Date().getHours()),60000);return()=>clearInterval(t);},[]);
+
   /* 항목 상세 — 주소에 #item/<id>를 붙여 뒤로가기로 닫히게 */
   const hashId=()=>{const m=(window.location.hash||"").match(/^#item\/(.+)$/);return m?decodeURIComponent(m[1]):null;};
   const [detailId,setDetailId]=useState(hashId);
@@ -178,6 +186,21 @@ export default function App(){
     }
   };
 
+  const loadRatingsLocal=()=>{
+    try{const r=JSON.parse(LS.get("wr_ratings")||"{}");setRatings(r&&typeof r==="object"?r:{});}catch{setRatings({});}
+    setRatingMode("local");
+  };
+  const loadRatings=async()=>{
+    const from=toISO(addDays(mondayOf(new Date()),-53*7));
+    try{
+      const r=await api(`/api/ratings?from=${from}`);
+      const map={}; for(const x of r?.ratings||[]) if(x.date&&x.score) map[x.date]=x.score;
+      setRatings(map); setRatingMode("notion");
+    }catch(e){
+      if(ratingModeRef.current!=="notion") loadRatingsLocal();
+    }
+  };
+
   const lastLoad=useRef(0);
   const refresh=async()=>{
     try{
@@ -186,10 +209,11 @@ export default function App(){
       setStaleWarn("");
       loadOlder(info.from);
       loadLessons();
+      loadRatings();
     }
     catch(e){
       if(sync.mode==="notion") setStaleWarn("노션에 연결하지 못해 마지막으로 불러온 기록을 보여주고 있어요.");
-      else { loadFromLocal(); loadLessonsLocal(""); setSync({mode:"local",error:e.message||"노션에 연결하지 못했어요."}); }
+      else { loadFromLocal(); loadLessonsLocal(""); loadRatingsLocal(); setSync({mode:"local",error:e.message||"노션에 연결하지 못했어요."}); }
     }
     finally{ setLoaded(true); lastLoad.current=Date.now(); }
   };
@@ -212,10 +236,12 @@ export default function App(){
   useEffect(()=>{if(loaded&&sync.mode==="local")LS.set("wr_items",JSON.stringify(items));},[items,loaded,sync.mode]);
   useEffect(()=>{if(loaded&&sync.mode==="local")LS.set("wr_logs",JSON.stringify(logs));},[logs,loaded,sync.mode]);
   useEffect(()=>{if(lessonMode==="local")LS.set("wr_lessons",JSON.stringify(lessons));},[lessons,lessonMode]);
+  useEffect(()=>{if(ratingMode==="local")LS.set("wr_ratings",JSON.stringify(ratings));},[ratings,ratingMode]);
   useEffect(()=>{
     if(!loaded||sync.mode!=="notion"||!resRef.current)return;
-    LS.set(CACHE_KEY,JSON.stringify({res:resRef.current,logs,lessons:lessonMode==="notion"?lessons:undefined,savedAt:Date.now()}));
-  },[items,logs,lessons,lessonMode,loaded,sync.mode]);
+    LS.set(CACHE_KEY,JSON.stringify({res:resRef.current,logs,lessons:lessonMode==="notion"?lessons:undefined,
+      ratings:ratingMode==="notion"?ratings:undefined,savedAt:Date.now()}));
+  },[items,logs,lessons,lessonMode,ratings,ratingMode,loaded,sync.mode]);
 
   const today=toISO(new Date());
   const selMon=mondayOf(fromISO(selDate)),weekStart=toISO(selMon);
@@ -257,6 +283,15 @@ export default function App(){
       setToast(e.message||"레슨런을 저장하지 못했어요.");
       throw e;
     }
+  };
+  /* 하루 평점 — 같은 별을 다시 누르면 지움(0) */
+  const setRating=async(date,score)=>{
+    const prev=ratings[date]||0;
+    const apply=(v)=>setRatings(p=>{const o={...p};if(v)o[date]=v;else delete o[date];return o;});
+    apply(score);
+    if(ratingMode!=="notion") return;
+    try{ await api("/api/ratings",{method:"PUT",body:JSON.stringify({date,score})}); }
+    catch(e){ apply(prev); setToast(e.message||"평점을 저장하지 못했어요."); }
   };
   const delLesson=async(id)=>{
     const prev=lessons;
@@ -340,6 +375,11 @@ export default function App(){
       records:[...logged].reverse(),todayOn:isLogged(h.id,today),started:startISO<=today};
   };
 
+  /* 평점 모듈: 오늘이고 저녁 6시~자정이면 펼침. 직접 접거나 펼치면 그 날짜에선 그 선택을 따름 */
+  const [ratingToggle,setRatingToggle]=useState({});   // { date: true|false }
+  const ratingAuto=selDate===today&&hour>=18;
+  const ratingOpen=ratingToggle[selDate]??ratingAuto;
+
   /* 선택한 날짜 하루의 진행 */
   const dayDone=list.filter(h=>isLogged(h.id,selDate)).length;
 
@@ -399,6 +439,10 @@ export default function App(){
                 <div className="bar" style={{marginTop:10}}><div style={{width:`${dayDone/list.length*100}%`}}/></div>
               </div>}
 
+            <RatingCard label={dayLabel} score={ratings[selDate]||0} open={ratingOpen}
+              onToggle={()=>setRatingToggle(t=>({...t,[selDate]:!ratingOpen}))}
+              onRate={(n)=>setRating(selDate,n===(ratings[selDate]||0)?0:n)}/>
+
             {/* 할 일 목록 */}
             {list.length>0&&
               <div className="card" style={{padding:4}}>
@@ -423,7 +467,7 @@ export default function App(){
             {/* 할 일 추가·수정은 노션 DB에서 */}
             {itemsDb&&
               <a className="link" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer"
-                style={{display:"block",width:"fit-content",margin:"16px auto 0",fontSize:13}}>할 일 정리하기</a>}
+                style={{display:"block",width:"fit-content",margin:"16px auto 0",fontSize:13}}>관리하기</a>}
           </div>
         )}
 
@@ -671,6 +715,33 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   );
 }
 
+/* ── 하루 평점 ── 접힌 상태: 버튼 한 줄 / 펼친 상태: 별 5개 */
+function RatingCard({label,score,open,onToggle,onRate}){
+  return(
+    <div className="card" style={{marginBottom:12,overflow:"hidden"}}>
+      <button className="btn rate-head" onClick={onToggle} aria-expanded={open}>
+        <span>{label} 하루 평점</span>
+        <span style={{display:"flex",alignItems:"center",gap:8}}>
+          {open?null:score>0
+            ? <span className="mono" style={{color:"var(--acc)",fontWeight:600}}>{"★".repeat(score)}<span style={{color:"var(--cell)"}}>{"★".repeat(5-score)}</span></span>
+            : <span style={{color:"var(--sub)"}}>평점 매기기</span>}
+          <span aria-hidden="true" style={{color:"var(--sub)",transform:open?"rotate(90deg)":"none",transition:"transform .15s"}}>›</span>
+        </span>
+      </button>
+      {open&&
+        <div className="fade" style={{padding:"4px 16px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+          <div role="radiogroup" aria-label={`${label} 하루 평점`} style={{display:"flex",gap:4}}>
+            {[1,2,3,4,5].map(n=>(
+              <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
+                onClick={()=>onRate(n)}>★</button>
+            ))}
+          </div>
+          <div className="mono" style={{fontSize:12,color:"var(--sub)"}}>{score?`${score} / 5 · 같은 별을 누르면 지워요`:"별을 눌러 오늘 하루를 평가하세요"}</div>
+        </div>}
+    </div>
+  );
+}
+
 /* ── 레슨런 ── 그날 일하며 배운 점을 한 줄로 남기고, 주차별로 모아 봄 */
 function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDelete}){
   const [draft,setDraft]=useState("");
@@ -755,6 +826,11 @@ const CSS=`
   .lessons-mini{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
   .lessons-mini li{display:flex;gap:10px;font-size:14px;line-height:1.5;word-break:keep-all;white-space:pre-wrap}
   .lessons-mini li span{color:var(--sub);font-size:12px;flex:0 0 auto;padding-top:2px}
+  .rate-head{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;padding:14px 16px;
+    background:none;border:none;color:var(--ink);font-size:13px;text-align:left}
+  .btn.star{border:none;background:none;padding:2px 4px;font-size:34px;line-height:1;color:var(--cell);transition:color .12s,transform .12s}
+  .btn.star.on{color:var(--acc)}
+  .btn.star:active{transform:scale(.9)}
   .btn.del{border:none;background:none;color:var(--sub);font-size:18px;line-height:1;width:32px;height:32px;flex:0 0 auto;border-radius:8px}
   .btn.del:hover{background:var(--cell)}
   .link{background:none;border:none;padding:4px;color:var(--sub);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}

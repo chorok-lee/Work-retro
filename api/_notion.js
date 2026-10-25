@@ -14,6 +14,7 @@ export const CFG = {
   get logsDb()  { return process.env.NOTION_LOGS_DB  || ""; },
   get owner()   { return process.env.NOTION_OWNER    || ""; },
   get lessonsDb(){ return process.env.NOTION_LESSONS_DB || ""; },
+  get ratingsDb(){ return process.env.NOTION_RATINGS_DB || ""; },
 };
 
 /* 토큰·DB ID가 없으면 여기서 안내와 함께 끝냄 */
