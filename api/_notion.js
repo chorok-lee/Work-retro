@@ -15,6 +15,8 @@ export const CFG = {
   get owner()   { return process.env.NOTION_OWNER    || ""; },
   get lessonsDb(){ return process.env.NOTION_LESSONS_DB || ""; },
   get ratingsDb(){ return process.env.NOTION_RATINGS_DB || ""; },
+  /* 오늘 할 일 = '26 과업 목록' DB (마감일이 그날인 과업) */
+  get tasksDb()  { return process.env.NOTION_TASKS_DB || "2dc554b4b9328084a300e16c4cea05bc"; },
 };
 
 /* 토큰·DB ID가 없으면 여기서 안내와 함께 끝냄 */

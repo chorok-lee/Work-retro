@@ -19,10 +19,14 @@ export default async function handler(req, res) {
 
   try {
     const [items, logs] = await Promise.all([dbProps(CFG.itemsDb), dbProps(CFG.logsDb)]);
+    let 할일DB;
+    try { 할일DB = { id: CFG.tasksDb, 속성: summarize(await dbProps(CFG.tasksDb)) }; }
+    catch (e) { 할일DB = { id: CFG.tasksDb, 상태: "접근 실패: " + e.message + " — 이 DB의 ··· → Connections에 Integration을 추가해주세요" }; }
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json({
       항목DB: { id: CFG.itemsDb, 속성: summarize(items) },
       기록DB: { id: CFG.logsDb, 속성: summarize(logs) },
+      할일DB,
       레슨런DB: CFG.lessonsDb || "(미설정 → 제목 '레슨런'으로 자동 탐색)",
       설정: {
         NOTION_OWNER: CFG.owner || "(미설정 → 모든 항목 표시)",
