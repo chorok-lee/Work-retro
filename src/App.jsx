@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
    할 일(업무 루틴)마다 주간 목표 횟수를 두고, 날짜별로 체크합니다.
-   [할 일] 탭: 날짜별 체크, 하루 평점  ·  [레슨런] 탭: 그날 배운 점 한 줄
+   [오늘] 탭: 오늘 할 일(노션 과업 DB, 마감일 = 그날) · 매일 루틴 체크 · 하루 평점
+   [레슨런] 탭: 그날 배운 점 한 줄
    [회고] 탭: 지난주 대비 페이스, 이번 주 레슨런, 할 일별 기록
 ──────────────────────────────────────────────────────────── */
 
@@ -117,6 +118,14 @@ export default function App(){
   const [ratings,setRatings]=useState(()=>cache0?.ratings&&typeof cache0.ratings==="object"?cache0.ratings:{});
   const [ratingMode,setRatingMode]=useState(cache0?.ratings?"notion":"loading");
   const ratingModeRef=useRef(ratingMode); ratingModeRef.current=ratingMode;
+  /* 오늘 할 일 { "YYYY-MM-DD": [task] } — 노션 과업 DB에서 마감일이 그날인 것.
+     앱에서 바꾸면 바로 노션에 저장, 노션에서 바꾼 건 앱 복귀 시·1분마다 다시 불러와 반영 */
+  const [tasks,setTasks]=useState({});
+  const [tasksErr,setTasksErr]=useState("");
+  const taskWriteAt=useRef(0);   // 쓰기 이후에 시작되지 않은 조회 결과는 버림(방금 바꾼 값이 되돌아가지 않도록)
+  const syncModeRef=useRef("loading");
+  const selDateRef=useRef(null);
+
   /* 저녁 6시~자정에는 평점 모듈을 펼쳐 둡니다 — 시각이 바뀌는 걸 1분마다 확인 */
   const [hour,setHour]=useState(()=>new Date().getHours());
   useEffect(()=>{const t=setInterval(()=>setHour(new Date().getHours()),60000);return()=>clearInterval(t);},[]);
@@ -150,7 +159,7 @@ export default function App(){
     const from=toISO(addDays(mondayOf(now),-(RECENT_WEEKS-1)*7));
     const [res,ls]=await Promise.all([api("/api/items"),api(`/api/logs?from=${from}&to=${to}`)]);
     if(!Array.isArray(res?.items)||!res.items.length)
-      throw new Error("노션에서 가져온 할 일이 없어요. '활성' 체크가 켜진 할 일이 있는지 확인해주세요.");
+      throw new Error("노션에서 가져온 루틴이 없어요. '활성' 체크가 켜진 루틴이 있는지 확인해주세요.");
     resRef.current=res;
     setItems(res.items);
     /* 직전이 로컬 모드였다면 그 기록은 섞지 않음 */
@@ -210,6 +219,22 @@ export default function App(){
     }
   };
 
+  const loadTasks=async(date,mode=syncModeRef.current)=>{
+    if(!date) return;
+    if(mode==="local"){
+      try{const all=JSON.parse(LS.get("wr_tasks")||"{}");setTasks(all&&typeof all==="object"?all:{});}catch{setTasks({});}
+      return;
+    }
+    if(mode!=="notion") return;
+    const started=Date.now();
+    try{
+      const r=await api(`/api/tasks?date=${date}`);
+      if(taskWriteAt.current>=started) return;
+      setTasks(p=>({...p,[date]:Array.isArray(r?.tasks)?r.tasks:[]}));
+      setTasksErr("");
+    }catch(e){ setTasksErr(e.message||"할 일을 불러오지 못했어요."); }
+  };
+
   const lastLoad=useRef(0);
   const refresh=async()=>{
     try{
@@ -219,10 +244,11 @@ export default function App(){
       loadOlder(info.from);
       loadLessons();
       loadRatings();
+      loadTasks(selDateRef.current,"notion");
     }
     catch(e){
       if(sync.mode==="notion") setStaleWarn("노션에 연결하지 못해 마지막으로 불러온 기록을 보여주고 있어요.");
-      else { loadFromLocal(); loadLessonsLocal(""); loadRatingsLocal(); setSync({mode:"local",error:e.message||"노션에 연결하지 못했어요."}); }
+      else { loadFromLocal(); loadLessonsLocal(""); loadRatingsLocal(); loadTasks(selDateRef.current,"local"); setSync({mode:"local",error:e.message||"노션에 연결하지 못했어요."}); }
     }
     finally{ setLoaded(true); lastLoad.current=Date.now(); }
   };
@@ -246,6 +272,14 @@ export default function App(){
   useEffect(()=>{if(loaded&&sync.mode==="local")LS.set("wr_logs",JSON.stringify(logs));},[logs,loaded,sync.mode]);
   useEffect(()=>{if(lessonMode==="local")LS.set("wr_lessons",JSON.stringify(lessons));},[lessons,lessonMode]);
   useEffect(()=>{if(ratingMode==="local")LS.set("wr_ratings",JSON.stringify(ratings));},[ratings,ratingMode]);
+  useEffect(()=>{if(sync.mode==="local")LS.set("wr_tasks",JSON.stringify(tasks));},[tasks,sync.mode]);
+  syncModeRef.current=sync.mode; selDateRef.current=selDate;
+  /* 날짜를 옮기면 그날 할 일을, 화면을 켜 둔 동안엔 1분마다 다시 불러옴 */
+  useEffect(()=>{if(sync.mode==="notion")loadTasks(selDate);},[selDate,sync.mode]);
+  useEffect(()=>{
+    const t=setInterval(()=>{if(document.visibilityState==="visible")loadTasks(selDateRef.current);},60000);
+    return()=>clearInterval(t);
+  },[]);
   useEffect(()=>{
     if(!loaded||sync.mode!=="notion"||!resRef.current)return;
     LS.set(CACHE_KEY,JSON.stringify({res:resRef.current,logs,lessons:lessonMode==="notion"?lessons:undefined,
@@ -295,6 +329,32 @@ export default function App(){
     }
   };
   /* 하루 평점 — 같은 별을 다시 누르면 지움(0) */
+  /* 오늘 할 일 추가·수정 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
+  const addTask=async(title)=>{
+    const date=selDate, tmp={id:"tmp"+Date.now(),title,done:false,priority:"",url:""};
+    taskWriteAt.current=Date.now();
+    setTasks(p=>({...p,[date]:[...(p[date]||[]),tmp]}));
+    if(sync.mode!=="notion") return;
+    try{
+      const r=await api("/api/tasks",{method:"POST",body:JSON.stringify({title,date})});
+      setTasks(p=>({...p,[date]:(p[date]||[]).map(t=>t.id===tmp.id?r.task:t)}));
+    }catch(e){
+      setTasks(p=>({...p,[date]:(p[date]||[]).filter(t=>t.id!==tmp.id)}));
+      setToast(e.message||"할 일을 추가하지 못했어요.");
+    }finally{ taskWriteAt.current=Date.now(); }
+  };
+  const patchTask=async(id,patch)=>{
+    const date=selDate, prev=(tasks[date]||[]).find(t=>t.id===id); if(!prev) return;
+    taskWriteAt.current=Date.now();
+    setTasks(p=>({...p,[date]:(p[date]||[]).map(t=>t.id===id?{...t,...patch}:t)}));
+    if(sync.mode!=="notion"||String(id).startsWith("tmp")) return;
+    try{ await api("/api/tasks",{method:"PATCH",body:JSON.stringify({id,...patch})}); }
+    catch(e){
+      setTasks(p=>({...p,[date]:(p[date]||[]).map(t=>t.id===id?prev:t)}));
+      setToast(e.message||"노션에 저장하지 못했어요.");
+    }finally{ taskWriteAt.current=Date.now(); }
+  };
+
   const setRating=async(date,score)=>{
     const prev=ratings[date]||0;
     const apply=(v)=>setRatings(p=>{const o={...p};if(v)o[date]=v;else delete o[date];return o;});
@@ -432,7 +492,7 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
             <h1 style={{fontSize:17,fontWeight:700,margin:0,letterSpacing:"-0.01em"}}>업무 회고</h1>
             <div role="tablist" className="seg">
-              {[["todo","할 일"],["lessons","레슨런"],["review","회고"]].map(([k,l])=>(
+              {[["todo","오늘"],["lessons","레슨런"],["review","회고"]].map(([k,l])=>(
                 <button key={k} role="tab" aria-selected={tab===k} className={"btn"+(tab===k?" on":"")} onClick={()=>setTab(k)}>{l}</button>
               ))}
             </div>
@@ -446,21 +506,24 @@ export default function App(){
           <div className="fade">
             {dateStepper}
 
-            {/* 하루 진행 */}
-            {list.length>0&&
-              <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
-                  <span style={{color:"var(--sub)"}}>{dayLabel} 진행</span>
-                  <span className="mono"><b>{dayDone}</b><span style={{color:"var(--sub)"}}> / {list.length}개 완료</span></span>
-                </div>
-                <div className="bar" style={{marginTop:10}}><div style={{width:`${dayDone/list.length*100}%`}}/></div>
-              </div>}
-
             {evening&&ratingCard}
 
-            {/* 할 일 목록 */}
-            {list.length>0&&
+            {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
+            <TasksSection title={selDate===today?"오늘 할 일":`${selD.getMonth()+1}월 ${selD.getDate()}일 할 일`}
+              tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
+              onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}/>
+
+            {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
+            {list.length>0&&<>
+              <div className="sec">
+                <span>매일 루틴</span>
+                <span className="mono"><b style={{color:"var(--ink)"}}>{dayDone}</b> / {list.length}
+                  {/* 루틴 추가·수정은 노션 DB에서 */}
+                  {itemsDb&&<> · <a className="link" style={{padding:0,fontSize:13}} href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`}
+                    target="_blank" rel="noopener noreferrer">관리하기</a></>}</span>
+              </div>
               <div className="card" style={{padding:4}}>
+                <div className="bar" style={{height:3,margin:"6px 12px 2px"}}><div style={{width:`${dayDone/list.length*100}%`}}/></div>
                 {list.map((h,i)=>{
                   const on=isLogged(h.id,selDate),wc=weekCount(h.id),t=tgtOf(h);
                   return(
@@ -477,14 +540,12 @@ export default function App(){
                     </div>
                   );
                 })}
-              </div>}
+              </div>
+            </>}
 
             {!evening&&<div style={{marginTop:12}}>{ratingCard}</div>}
 
-            {/* 할 일 추가·수정은 노션 DB에서 */}
-            {itemsDb&&
-              <a className="link" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer"
-                style={{display:"block",width:"fit-content",margin:"16px auto 0",fontSize:13}}>관리하기</a>}
+
           </div>
         )}
 
@@ -735,6 +796,51 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   );
 }
 
+/* ── 오늘 할 일 ── 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래 줄에서 새로 추가 */
+const PRI_COLOR={핵심:"var(--neg)",높음:"var(--acc)"};
+function TasksSection({title,tasks,err,onAdd,onToggle,onRename}){
+  const [draft,setDraft]=useState("");
+  const [edit,setEdit]=useState(null);   // { id, text }
+  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t);setDraft("");};
+  const commit=()=>{
+    if(!edit) return;
+    const t=tasks.find(x=>x.id===edit.id), v=edit.text.trim();
+    if(t&&v&&v!==t.title) onRename(t,v);
+    setEdit(null);
+  };
+  const done=tasks.filter(t=>t.done).length;
+  return(<>
+    <div className="sec" style={{marginTop:4}}>
+      <span>{title}</span>
+      {tasks.length>0&&<span className="mono"><b style={{color:"var(--ink)"}}>{done}</b> / {tasks.length}</span>}
+    </div>
+    <div className="card" style={{padding:4,marginBottom:4}}>
+      {err&&<div className="notice" style={{margin:8}}>{err}</div>}
+      {tasks.map((t,i)=>(
+        <div key={t.id} className="row" style={{borderTop:i?"1px solid var(--line)":"none",cursor:"default"}}>
+          <span className={"chk"+(t.done?" on":"")} role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0}
+            style={{cursor:"pointer"}} onClick={()=>onToggle(t)}
+            onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}>{t.done?"✓":""}</span>
+          {edit?.id===t.id
+            ? <input className="task-in" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
+                onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
+            : <button className="btn task-title" onClick={()=>setEdit({id:t.id,text:t.title})}
+                style={{textDecoration:t.done?"line-through":"none",color:t.done?"var(--sub)":"var(--ink)"}}>{t.title}</button>}
+          {t.priority&&<span className="pri" style={{color:PRI_COLOR[t.priority]||"var(--sub)"}}>{t.priority}</span>}
+        </div>
+      ))}
+      <div className="row" style={{borderTop:tasks.length||err?"1px solid var(--line)":"none",cursor:"text"}}>
+        <span aria-hidden="true" style={{width:22,textAlign:"center",color:"var(--sub)",fontSize:18,lineHeight:1}}>+</span>
+        <input className="task-in" value={draft} maxLength={200} placeholder={tasks.length?"할 일 추가":"마감일이 이날인 할 일이 없어요 · 여기에 추가"}
+          aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
+        {draft.trim()&&<button className="btn primary" onClick={add}>추가</button>}
+      </div>
+    </div>
+  </>);
+}
+
 /* ── 하루 평가 ── 접힌 상태: 박스 버튼 / 펼친 상태: 별 5개 */
 function RatingCard({score,open,onToggle,onRate}){
   return(
@@ -893,6 +999,12 @@ const CSS=`
   .btn.star{border:none;background:none;padding:2px 4px;font-size:34px;line-height:1;color:var(--cell);transition:color .12s,transform .12s}
   .btn.star.on{color:var(--acc)}
   .btn.star:active{transform:scale(.9)}
+  .sec{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--sub);margin:20px 2px 8px}
+  .sec>span:first-child{font-weight:600;color:var(--ink)}
+  .task-title{flex:1;min-width:0;text-align:left;background:none;border:none;padding:0;font-size:15px;font-weight:500;word-break:keep-all;cursor:text}
+  .task-in{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--ink);font-size:15px;padding:2px 0}
+  .task-in::placeholder{color:var(--sub)}
+  .pri{font-size:11px;font-weight:600;flex:0 0 auto}
   .btn.more{border:none;background:none;color:var(--sub);font-size:20px;line-height:1;width:32px;height:32px;border-radius:8px;letter-spacing:1px}
   .btn.more:hover,.btn.more[aria-expanded=true]{background:var(--cell)}
   .menu{position:absolute;right:0;top:34px;z-index:5;min-width:96px;background:var(--surface);border:1px solid var(--line);border-radius:10px;
