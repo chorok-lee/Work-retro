@@ -16,9 +16,11 @@ const DEFAULT_ITEMS = [
   { id:"retro", name:"주간 회고 작성",      kind:"weekly", target:1 },
 ];
 
-const tgtOf = (h) => h.kind==="daily" ? 7 : h.target;
-const freqLabel = (h) => tgtOf(h)>=7 ? "매일" : `주 ${tgtOf(h)}회`;
-/* 주 7회(매일) → 주 1회 순으로, 같은 주기면 가나다순 */
+/* 한 주 = 평일 5일. 매일 = 주 5회, 주 6~7회로 적힌 것도 5회로 봅니다 */
+const WORKDAYS=5;
+const tgtOf = (h) => h.kind==="daily" ? WORKDAYS : Math.min(WORKDAYS,h.target);
+const freqLabel = (h) => tgtOf(h)>=WORKDAYS ? "매일" : `주 ${tgtOf(h)}회`;
+/* 매일 → 주 1회 순으로, 같은 주기면 가나다순 */
 const sortItems = (list) => [...(list||[])].sort((a,b)=>{
   const ta=tgtOf(a), tb=tgtOf(b);
   if(ta!==tb) return tb-ta;
@@ -29,9 +31,16 @@ const toISO=(d)=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0
 const fromISO=(s)=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);};
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
 const mondayOf=(d)=>{const x=new Date(d);x.setDate(x.getDate()-((x.getDay()+6)%7));return x;};
-const weekDatesFrom=(mon)=>Array.from({length:7},(_,i)=>toISO(addDays(mon,i)));
-/* 한 주는 월요일에 시작해서 일요일 23:59에 닫힙니다 */
-const DAYS=["월","화","수","목","금","토","일"];
+/* 한 주의 평일(월~금) 날짜. 토·일 기록은 세지 않습니다 */
+const weekDatesFrom=(mon)=>Array.from({length:WORKDAYS},(_,i)=>toISO(addDays(mon,i)));
+const DAYS=["월","화","수","목","금"];
+const WD7=["월","화","수","목","금","토","일"];   // 날짜 표시용
+const wdOf=(iso)=>WD7[(fromISO(iso).getDay()+6)%7];
+const isWorkday=(iso)=>{const g=fromISO(iso).getDay();return g!==0&&g!==6;};
+/* 주말이면 앞뒤 평일로 */
+const prevWorkday=(iso)=>{let d=addDays(fromISO(iso),-1);while(!isWorkday(toISO(d)))d=addDays(d,-1);return toISO(d);};
+const nextWorkday=(iso)=>{let d=addDays(fromISO(iso),1);while(!isWorkday(toISO(d)))d=addDays(d,1);return toISO(d);};
+const lastWorkday=(iso)=>isWorkday(iso)?iso:prevWorkday(iso);
 /* "10월 3주차" — 주가 두 달에 걸치면 목요일이 속한 달로 셉니다 */
 const weekOfMonth=(monISO)=>{const th=addDays(fromISO(monISO),3);return {m:th.getMonth()+1,w:Math.ceil(th.getDate()/7)};};
 /* 노션 시각(UTC) 또는 날짜 → 이 기기 기준 YYYY-MM-DD */
@@ -85,7 +94,7 @@ export default function App(){
   const [items,setItems]=useState(()=>cache0?cache0.res.items:[]);
   const [logs,setLogs]=useState(()=>cache0?cache0.logs:{});
   const [tab,setTab]=useState("todo");
-  const [selDate,setSelDate]=useState(toISO(new Date()));
+  const [selDate,setSelDate]=useState(()=>lastWorkday(toISO(new Date())));
   const [loaded,setLoaded]=useState(!!cache0);
 
   /* 노션 연결 상태: loading | notion | local */
@@ -244,6 +253,7 @@ export default function App(){
   },[items,logs,lessons,lessonMode,ratings,ratingMode,loaded,sync.mode]);
 
   const today=toISO(new Date());
+  const workToday=lastWorkday(today);   // 주말엔 직전 금요일
   const selMon=mondayOf(fromISO(selDate)),weekStart=toISO(selMon);
   const weekDates=useMemo(()=>weekDatesFrom(selMon),[weekStart]);
   const isLogged=(id,d)=>(logs[d]||[]).includes(id);
@@ -320,7 +330,7 @@ export default function App(){
   /* ── 페이스: 지난주 같은 요일까지 vs 이번 주 지금까지 ── */
   const paceOf=(list)=>{
     if(!list.length) return null;
-    const todayIdx=(fromISO(today).getDay()+6)%7;
+    const todayIdx=Math.min(WORKDAYS-1,(fromISO(today).getDay()+6)%7);   // 주말이면 금요일까지
     const dayCount=(iso)=>list.reduce((n,h)=>n+(isLogged(h.id,iso)?1:0),0);
     const cumul=(mon)=>{let c=0;return weekDatesFrom(mon).map(d=>(c+=dayCount(d)));};
     const cur=cumul(curMon), prev=cumul(addDays(curMon,-7));
@@ -328,7 +338,7 @@ export default function App(){
     const curWeek=weekDatesFrom(curMon);
     const left=(h)=>tgtOf(h)-curWeek.reduce((n,d)=>n+(isLogged(h.id,d)?1:0),0);
     /* 이 속도면 채울 수 있는 목표 수 */
-    const onTrack=list.filter(h=>{const wc=tgtOf(h)-left(h);return wc/(todayIdx+1)*7>=tgtOf(h);}).length;
+    const onTrack=list.filter(h=>{const wc=tgtOf(h)-left(h);return wc/(todayIdx+1)*WORKDAYS>=tgtOf(h);}).length;
     /* 최고 기록 주 (불러온 1년 안, 이번 주 제외) */
     let best=0,bestMon=null;
     for(let i=1;i<=52;i++){
@@ -343,7 +353,7 @@ export default function App(){
      칸 상태: full(목표 채운 주의 체크) · part(못 채운 주의 체크) · empty · pre(시작 전) · future
      연속: 매일 항목은 '일', 주 N회 항목은 '주' 단위 */
   const itemStats=(h)=>{
-    const t=tgtOf(h), daily=t>=7;
+    const t=tgtOf(h), daily=t>=WORKDAYS;
     const yearAgo=toISO(addDays(fromISO(today),-364));
     const startISO=startOf(h)||yearAgo;
     const weekCnt={};
@@ -354,12 +364,12 @@ export default function App(){
       if(!isLogged(h.id,iso)) return "empty";
       return cntOf(mondayOf(fromISO(iso)))>=t?"full":"part";
     };
-    const days=[]; for(let d=fromISO(startISO>yearAgo?startISO:yearAgo);toISO(d)<=today;d=addDays(d,1)) days.push(toISO(d));
+    const days=[]; for(let d=fromISO(startISO>yearAgo?startISO:yearAgo);toISO(d)<=today;d=addDays(d,1)) if(isWorkday(toISO(d))) days.push(toISO(d));
     const logged=days.filter(d=>isLogged(h.id,d));
     let cur=0,best=0;
     if(daily){
       let run=0; for(const d of days){ run=isLogged(h.id,d)?run+1:0; best=Math.max(best,run); }
-      let i=days.length-1; if(i>=0&&!isLogged(h.id,days[i])) i--;          // 오늘 아직이면 어제부터
+      let i=days.length-1; if(i>=0&&days[i]===today&&!isLogged(h.id,days[i])) i--;   // 오늘 아직이면 직전 평일부터
       while(i>=0&&isLogged(h.id,days[i])){cur++;i--;}
     }else{
       const mons=[]; for(let m=mondayOf(fromISO(days[0]||today));toISO(m)<=today;m=addDays(m,7)) mons.push(m);
@@ -369,16 +379,23 @@ export default function App(){
     }
     const wc=cntOf(curMon);
     /* 최근 12주(이번 주 제외, 시작 이후) 중 목표를 채운 주 */
-    let ok=0,elig=0; for(let i=1;i<=12;i++){const m=addDays(curMon,-7*i); if(toISO(addDays(m,6))<startISO) continue; elig++; if(cntOf(m)>=t) ok++;}
+    let ok=0,elig=0; for(let i=1;i<=12;i++){const m=addDays(curMon,-7*i); if(toISO(addDays(m,WORKDAYS-1))<startISO) continue; elig++; if(cntOf(m)>=t) ok++;}
     return {h,t,daily,unit:daily?"일":"주",cell,cur,best,total:logged.length,startISO,
       wc,weekPct:Math.min(1,wc/t),ok,elig,rate:elig?ok/elig:null,
       records:[...logged].reverse(),todayOn:isLogged(h.id,today),started:startISO<=today};
   };
 
-  /* 평점 모듈: 오늘이고 저녁 6시~자정이면 펼침. 직접 접거나 펼치면 그 날짜에선 그 선택을 따름 */
+  /* 하루 평가: 평소엔 할 일 목록 아래 접힌 박스.
+     오늘 저녁 6시~자정에는 진행 카드 바로 아래로 올라와 펼쳐짐 (워킹아워 끝나고 잊지 않도록).
+     직접 접거나 펼치면 그 날짜에선 그 선택을 따름 */
   const [ratingToggle,setRatingToggle]=useState({});   // { date: true|false }
-  const ratingAuto=selDate===today&&hour>=18;
-  const ratingOpen=ratingToggle[selDate]??ratingAuto;
+  const evening=selDate===today&&hour>=18;
+  const ratingOpen=ratingToggle[selDate]??evening;
+  const ratingCard=(
+    <RatingCard score={ratings[selDate]||0} open={ratingOpen}
+      onToggle={()=>setRatingToggle(t=>({...t,[selDate]:!ratingOpen}))}
+      onRate={(n)=>setRating(selDate,n===(ratings[selDate]||0)?0:n)}/>
+  );
 
   /* 선택한 날짜 하루의 진행 */
   const dayDone=list.filter(h=>isLogged(h.id,selDate)).length;
@@ -395,15 +412,15 @@ export default function App(){
   /* 할 일·레슨런 탭이 함께 쓰는 날짜 이동 */
   const dateStepper=(
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,margin:"8px 0 12px"}}>
-      <button className="btn icon" aria-label="이전 날" onClick={()=>setSelDate(toISO(addDays(selD,-1)))}>‹</button>
+      <button className="btn icon" aria-label="이전 날" onClick={()=>setSelDate(prevWorkday(selDate))}>‹</button>
       <div style={{textAlign:"center"}}>
-        <div style={{fontSize:16,fontWeight:700}}>{selD.getMonth()+1}월 {selD.getDate()}일 ({DAYS[(selD.getDay()+6)%7]})</div>
+        <div style={{fontSize:16,fontWeight:700}}>{selD.getMonth()+1}월 {selD.getDate()}일 ({wdOf(selDate)})</div>
         <div style={{fontSize:12,color:"var(--sub)",marginTop:2}}>
-          {selWk.m}월 {selWk.w}주차{selDate!==today&&<> · <button className="link" onClick={()=>setSelDate(today)}>오늘로</button></>}
+          {selWk.m}월 {selWk.w}주차{selDate!==workToday&&<> · <button className="link" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘로":"최근 평일로"}</button></>}
         </div>
       </div>
-      <button className="btn icon" aria-label="다음 날" disabled={selDate>=today}
-        onClick={()=>{const n=addDays(selD,1);if(toISO(n)<=today)setSelDate(toISO(n));}}>›</button>
+      <button className="btn icon" aria-label="다음 날" disabled={nextWorkday(selDate)>today}
+        onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}>›</button>
     </div>
   );
 
@@ -439,9 +456,7 @@ export default function App(){
                 <div className="bar" style={{marginTop:10}}><div style={{width:`${dayDone/list.length*100}%`}}/></div>
               </div>}
 
-            <RatingCard label={dayLabel} score={ratings[selDate]||0} open={ratingOpen}
-              onToggle={()=>setRatingToggle(t=>({...t,[selDate]:!ratingOpen}))}
-              onRate={(n)=>setRating(selDate,n===(ratings[selDate]||0)?0:n)}/>
+            {evening&&ratingCard}
 
             {/* 할 일 목록 */}
             {list.length>0&&
@@ -464,6 +479,8 @@ export default function App(){
                 })}
               </div>}
 
+            {!evening&&<div style={{marginTop:12}}>{ratingCard}</div>}
+
             {/* 할 일 추가·수정은 노션 DB에서 */}
             {itemsDb&&
               <a className="link" href={`https://www.notion.so/${String(itemsDb).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer"
@@ -479,6 +496,7 @@ export default function App(){
         {!booting&&tab==="review"&&(
           <div className="fade">
             <PaceCard p={paceOf(list)}/>
+            <RatingTrend ratings={ratings} today={today}/>
             <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
                 <span style={{color:"var(--sub)"}}>이번 주 레슨런</span>
@@ -487,7 +505,7 @@ export default function App(){
               {thisWeekLessons.length===0
                 ? <div style={{fontSize:13,color:"var(--sub)",marginTop:8}}>아직 없어요. 레슨런 탭에서 남길 수 있어요.</div>
                 : <ul className="lessons-mini">
-                    {thisWeekLessons.map(l=><li key={l.id}><span className="mono">{DAYS[(fromISO(l.date).getDay()+6)%7]}</span>{l.text}</li>)}
+                    {thisWeekLessons.map(l=><li key={l.id}><span className="mono">{wdOf(l.date)}</span>{l.text}</li>)}
                   </ul>}
             </div>
             {list.length>0&&
@@ -524,15 +542,16 @@ function PaceCard({p}){
   if(!p) return null;
   const {todayIdx,cur,prev,now,diff,onTrack,total,best,bestMon}=p;
   const W=560,H=75,PX=24,PT=9,PB=7;
-  const max=Math.max(prev[6],now,1);
-  const X=(i)=>PX+(W-PX*2)*i/6, Y=(v)=>PT+(H-PT-PB)*(1-v/max);
+  const last=DAYS.length-1;
+  const max=Math.max(prev[last],now,1);
+  const X=(i)=>PX+(W-PX*2)*i/last, Y=(v)=>PT+(H-PT-PB)*(1-v/max);
   const pts=(arr,n)=>arr.slice(0,n).map((v,i)=>`${X(i)},${Y(v)}`).join(" ");
   const big=diff>0?`+${diff}`:`${diff}`;
   const label=diff>0?`지난주 ${DAYS[todayIdx]}요일까지보다 ${diff}회 많아요`
     :diff===0?`지난주 ${DAYS[todayIdx]}요일까지와 같아요`:`지난주 ${DAYS[todayIdx]}요일까지보다 ${-diff}회 적어요`;
   const wk=bestMon&&weekOfMonth(bestMon);
   const pick=(e)=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;
-    setHi(Math.max(0,Math.min(6,Math.round((x-PX)/((W-PX*2)/6)))));};
+    setHi(Math.max(0,Math.min(last,Math.round((x-PX)/((W-PX*2)/last)))));};
 
   return(
     <div className="card" style={{padding:"18px 16px",marginBottom:12}}>
@@ -546,7 +565,7 @@ function PaceCard({p}){
       <div style={{position:"relative",marginTop:16}} onPointerMove={pick} onPointerDown={pick}
         onPointerLeave={e=>{if(e.pointerType==="mouse")setHi(null);}}>
         {hi!=null&&
-          <div className="tip" style={{left:`${X(hi)/W*100}%`,transform:`translate(${hi<=1?"-12%":hi>=5?"-88%":"-50%"},-100%)`}}>
+          <div className="tip" style={{left:`${X(hi)/W*100}%`,transform:`translate(${hi<=0?"-12%":hi>=last?"-88%":"-50%"},-100%)`}}>
             <div style={{fontWeight:600,marginBottom:2}}>{DAYS[hi]}요일까지</div>
             <div style={{color:"var(--acc)"}}>이번 주 <b>{hi<=todayIdx?`${cur[hi]}회`:"–"}</b></div>
             <div style={{color:"var(--sub)"}}>지난주 <b style={{color:"var(--ink)"}}>{prev[hi]}회</b></div>
@@ -554,7 +573,7 @@ function PaceCard({p}){
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",overflow:"visible",touchAction:"pan-y"}} aria-hidden="true">
           {[0,.5,1].map(f=><line key={f} x1={PX} x2={W-PX} y1={Y(max*f)} y2={Y(max*f)} stroke="var(--line)" strokeWidth="1"/>)}
           {hi!=null&&<line x1={X(hi)} x2={X(hi)} y1={PT-8} y2={H-PB+4} stroke="var(--sub)" strokeOpacity=".5" strokeWidth="1" strokeDasharray="3 4"/>}
-          <polyline points={pts(prev,7)} fill="none" stroke="var(--sub)" strokeOpacity=".7" strokeWidth="2"
+          <polyline points={pts(prev,DAYS.length)} fill="none" stroke="var(--sub)" strokeOpacity=".7" strokeWidth="2"
             strokeDasharray="5 6" strokeLinecap="round" strokeLinejoin="round"/>
           <polyline points={pts(cur,todayIdx+1)} fill="none" stroke="var(--acc)" strokeWidth="2.5"
             strokeLinecap="round" strokeLinejoin="round"/>
@@ -585,7 +604,8 @@ const GRASS_BG={full:"var(--acc)",part:"rgba(var(--acc-rgb),.35)",empty:"var(--c
 function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
   const endMon=mondayOf(fromISO(endISO));
   const cols=Array.from({length:weeks},(_,i)=>addDays(endMon,-(weeks-1-i)*7));
-  const firstOf=cols.map(m=>weekDatesFrom(m).find(x=>x.endsWith("-01")));
+  /* 월 라벨은 주말 포함 7일 안에 1일이 있는지로 판단 (1일이 주말이어도 표시) */
+  const firstOf=cols.map(m=>Array.from({length:7},(_,i)=>toISO(addDays(m,i))).find(x=>x.endsWith("-01")));
   /* 그 주에 1일이 있으면 월 표시. 첫 칸은 바로 옆 칸에 월 표시가 없을 때만 (글자 겹침 방지) */
   const monthAt=cols.map((m,i)=>firstOf[i]?fromISO(firstOf[i]).getMonth()+1:i===0&&!firstOf[1]?m.getMonth()+1:null);
   const lab={fontSize:11,color:"var(--sub)",lineHeight:1,whiteSpace:"nowrap"};
@@ -601,7 +621,7 @@ function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
   });
   return(
     <div style={{display:"grid",gridTemplateColumns:`auto repeat(${weeks},minmax(0,1fr))`,
-      gridTemplateRows:`16px repeat(7,auto)`,gridAutoFlow:"column",columnGap:gap,rowGap:gap,minWidth:0}}>
+      gridTemplateRows:`16px repeat(${DAYS.length},auto)`,gridAutoFlow:"column",columnGap:gap,rowGap:gap,minWidth:0}}>
       {kids}
     </div>
   );
@@ -620,7 +640,7 @@ function ItemRow({st,today,first,onOpen}){
           이번 주 {Math.min(st.wc,st.t)}/{st.t}{st.cur>0&&<> · <span style={{color:"var(--acc)",fontWeight:600}}>{st.cur}{st.unit} 연속</span></>}
         </div>
       </div>
-      <div aria-hidden="true" style={{display:"grid",gridTemplateColumns:"repeat(7,11px)",gap:3,flex:"0 0 auto"}}>
+      <div aria-hidden="true" style={{display:"grid",gridTemplateColumns:`repeat(${DAYS.length},11px)`,gap:3,flex:"0 0 auto"}}>
         {weeks.flat().map(iso=>{const k=st.cell(iso);return <span key={iso} title={iso} style={{width:11,height:11,borderRadius:2,
           background:GRASS_BG[k],boxShadow:iso===today?"0 0 0 1.5px var(--ink)":"none"}}/>;})}
       </div>
@@ -634,7 +654,7 @@ const PAGE_WEEKS=22;
 function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   const [page,setPage]=useState(0);
   const maxPage=Math.floor(52/PAGE_WEEKS);
-  const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+6));
+  const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+WORKDAYS-1));
   const startISO=toISO(addDays(fromISO(endISO),-(7*PAGE_WEEKS-1)));
   const md=(iso)=>{const d=fromISO(iso);return `${d.getFullYear()!==fromISO(today).getFullYear()?`${d.getFullYear()}년 `:""}${d.getMonth()+1}월 ${d.getDate()}일`;};
   useEffect(()=>{ const o=document.body.style.overflow; document.body.style.overflow="hidden"; return()=>{document.body.style.overflow=o;}; },[]);
@@ -704,7 +724,7 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
                       <div key={iso} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontSize:14,
                         borderTop:i?"1px solid var(--line)":"none"}}>
                         <span>{d.getMonth()+1}월 {d.getDate()}일</span>
-                        <span style={{color:"var(--sub)"}}>{DAYS[(d.getDay()+6)%7]}요일</span>
+                        <span style={{color:"var(--sub)"}}>{wdOf(iso)}요일</span>
                       </div>);})}
                   </div>
                 </div>
@@ -715,29 +735,56 @@ function ItemDetail({st,today,isNotion,onClose,onCheckToday}){
   );
 }
 
-/* ── 하루 평점 ── 접힌 상태: 버튼 한 줄 / 펼친 상태: 별 5개 */
-function RatingCard({label,score,open,onToggle,onRate}){
+/* ── 하루 평가 ── 접힌 상태: 박스 버튼 / 펼친 상태: 별 5개 */
+function RatingCard({score,open,onToggle,onRate}){
   return(
     <div className="card" style={{marginBottom:12,overflow:"hidden"}}>
       <button className="btn rate-head" onClick={onToggle} aria-expanded={open}>
-        <span>{label} 하루 평점</span>
+        <span style={{fontWeight:600}}>하루 평가하기</span>
         <span style={{display:"flex",alignItems:"center",gap:8}}>
-          {open?null:score>0
-            ? <span className="mono" style={{color:"var(--acc)",fontWeight:600}}>{"★".repeat(score)}<span style={{color:"var(--cell)"}}>{"★".repeat(5-score)}</span></span>
-            : <span style={{color:"var(--sub)"}}>평점 매기기</span>}
+          {!open&&score>0&&<Stars n={score} size={13}/>}
           <span aria-hidden="true" style={{color:"var(--sub)",transform:open?"rotate(90deg)":"none",transition:"transform .15s"}}>›</span>
         </span>
       </button>
       {open&&
-        <div className="fade" style={{padding:"4px 16px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-          <div role="radiogroup" aria-label={`${label} 하루 평점`} style={{display:"flex",gap:4}}>
-            {[1,2,3,4,5].map(n=>(
-              <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
-                onClick={()=>onRate(n)}>★</button>
-            ))}
-          </div>
-          <div className="mono" style={{fontSize:12,color:"var(--sub)"}}>{score?`${score} / 5 · 같은 별을 누르면 지워요`:"별을 눌러 오늘 하루를 평가하세요"}</div>
+        <div role="radiogroup" aria-label="하루 평가" className="fade" style={{padding:"0 16px 16px",display:"flex",justifyContent:"center",gap:4}}>
+          {[1,2,3,4,5].map(n=>(
+            <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
+              onClick={()=>onRate(n)}>★</button>
+          ))}
         </div>}
+    </div>
+  );
+}
+function Stars({n,size=13}){
+  return <span className="mono" style={{fontSize:size,letterSpacing:1}} aria-label={`${n}점`}>
+    <span style={{color:"var(--acc)"}}>{"★".repeat(n)}</span><span style={{color:"var(--cell)"}}>{"★".repeat(5-n)}</span></span>;
+}
+
+/* ── 하루 평점 추이 ── 최근 4주 평일 막대 (높이 = 점수) + 주간 평균 */
+function RatingTrend({ratings,today}){
+  const curMon=mondayOf(fromISO(today));
+  const weeks=[3,2,1,0].map(i=>weekDatesFrom(addDays(curMon,-7*i)));
+  const avg=(ds)=>{const v=ds.map(d=>ratings[d]).filter(Boolean);return v.length?(v.reduce((a,b)=>a+b,0)/v.length):null;};
+  const cur=avg(weeks[3]), prev=avg(weeks[2]);
+  const f=(v)=>v==null?"–":v.toFixed(1);
+  const W=560,H=64,G=18,BW=(W-G*3)/20-6;
+  return(
+    <div className="card" style={{padding:"14px 16px",marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13}}>
+        <span style={{color:"var(--sub)"}}>하루 평점 추이</span>
+        <span className="mono"><span style={{color:"var(--sub)"}}>이번 주 </span><b>{f(cur)}</b><span style={{color:"var(--sub)"}}> · 지난주 {f(prev)}</span></span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",marginTop:12}} aria-hidden="true">
+        {weeks.map((ds,wi)=>ds.map((d,di)=>{
+          const x=wi*((W-G*3)/4+G)+di*((W-G*3)/20)+3, v=ratings[d]||0, h=v?Math.max(4,(H-2)*v/5):3;
+          return <rect key={d} x={x} y={H-h} width={BW} height={h} rx="2"
+            fill={d>today?"transparent":v?"var(--acc)":"var(--cell)"} opacity={v?.35+v*.13:1}><title>{`${d} ${v?v+"점":"기록 없음"}`}</title></rect>;
+        }))}
+      </svg>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",columnGap:G/W*100+"%",marginTop:6,fontSize:11,color:"var(--sub)"}}>
+        {weeks.map((ds,i)=><span key={i} style={{textAlign:"center"}}>{i===3?"이번 주":`${fromISO(ds[0]).getMonth()+1}/${fromISO(ds[0]).getDate()}`}</span>)}
+      </div>
     </div>
   );
 }
@@ -746,6 +793,14 @@ function RatingCard({label,score,open,onToggle,onRate}){
 function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDelete}){
   const [draft,setDraft]=useState("");
   const [saving,setSaving]=useState(false);
+  const [menu,setMenu]=useState(null);   // 열린 ⋯ 메뉴의 레슨런 id
+  useEffect(()=>{
+    if(!menu) return;
+    const close=()=>setMenu(null);
+    const esc=(e)=>{if(e.key==="Escape")close();};
+    document.addEventListener("click",close); document.addEventListener("keydown",esc);
+    return()=>{document.removeEventListener("click",close);document.removeEventListener("keydown",esc);};
+  },[menu]);
   const save=async()=>{
     const t=draft.trim(); if(!t||saving) return;
     setSaving(true);
@@ -784,9 +839,16 @@ function LessonsTab({dateStepper,selDate,dayLabel,today,lessons,note,onAdd,onDel
                   <div key={l.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"10px 0",borderTop:i?"1px solid var(--line)":"none"}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:14,lineHeight:1.55,whiteSpace:"pre-wrap",wordBreak:"keep-all"}}>{l.text}</div>
-                      <div className="mono" style={{fontSize:12,color:"var(--sub)",marginTop:3}}>{d.getMonth()+1}월 {d.getDate()}일 ({DAYS[(d.getDay()+6)%7]})</div>
+                      <div className="mono" style={{fontSize:12,color:"var(--sub)",marginTop:3}}>{d.getMonth()+1}월 {d.getDate()}일 ({wdOf(l.date)})</div>
                     </div>
-                    <button className="btn del" aria-label="삭제" onClick={()=>{if(window.confirm("이 레슨런을 삭제할까요?"))onDelete(l.id);}}>×</button>
+                    <div style={{position:"relative",flex:"0 0 auto"}}>
+                      <button className="btn more" aria-label="더보기" aria-haspopup="menu" aria-expanded={menu===l.id}
+                        onClick={e=>{e.stopPropagation();setMenu(m=>m===l.id?null:l.id);}}>⋯</button>
+                      {menu===l.id&&
+                        <div role="menu" className="menu" onClick={e=>e.stopPropagation()}>
+                          <button role="menuitem" className="btn" onClick={()=>{setMenu(null);onDelete(l.id);}}>삭제</button>
+                        </div>}
+                    </div>
                   </div>);})}
               </div>
             </div>);})}
@@ -827,12 +889,16 @@ const CSS=`
   .lessons-mini li{display:flex;gap:10px;font-size:14px;line-height:1.5;word-break:keep-all;white-space:pre-wrap}
   .lessons-mini li span{color:var(--sub);font-size:12px;flex:0 0 auto;padding-top:2px}
   .rate-head{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;padding:14px 16px;
-    background:none;border:none;color:var(--ink);font-size:13px;text-align:left}
+    background:none;border:none;color:var(--ink);font-size:14px;text-align:left}
   .btn.star{border:none;background:none;padding:2px 4px;font-size:34px;line-height:1;color:var(--cell);transition:color .12s,transform .12s}
   .btn.star.on{color:var(--acc)}
   .btn.star:active{transform:scale(.9)}
-  .btn.del{border:none;background:none;color:var(--sub);font-size:18px;line-height:1;width:32px;height:32px;flex:0 0 auto;border-radius:8px}
-  .btn.del:hover{background:var(--cell)}
+  .btn.more{border:none;background:none;color:var(--sub);font-size:20px;line-height:1;width:32px;height:32px;border-radius:8px;letter-spacing:1px}
+  .btn.more:hover,.btn.more[aria-expanded=true]{background:var(--cell)}
+  .menu{position:absolute;right:0;top:34px;z-index:5;min-width:96px;background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    padding:4px;box-shadow:0 6px 20px rgba(0,0,0,.12)}
+  .menu .btn{display:block;width:100%;text-align:left;border:none;background:none;color:var(--neg);font-size:14px;padding:8px 10px;border-radius:6px}
+  .menu .btn:hover{background:var(--cell)}
   .link{background:none;border:none;padding:4px;color:var(--sub);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--cell)}
   .seg .btn{border:none;background:transparent;color:var(--sub);padding:6px 12px;border-radius:8px;font-size:14px;font-weight:600}
