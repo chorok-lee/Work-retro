@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { extractTags } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
@@ -327,12 +328,12 @@ export default function App(){
 
   /* 레슨런 추가·삭제 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
   const addLesson=async(text,date)=>{
-    const tmp={id:"tmp"+Date.now(),date,text};
+    const tmp={id:"tmp"+Date.now(),date,text,tags:extractTags(text)};
     setLessons(p=>[tmp,...p]);
     if(lessonMode!=="notion"){setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:"l"+Date.now()}:l));return;}
     try{
       const r=await api("/api/lessons",{method:"POST",body:JSON.stringify({text,date})});
-      setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:r.id}:l));
+      setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:r.id,tags:Array.isArray(r.tags)?r.tags:l.tags}:l));
     }catch(e){
       setLessons(p=>p.filter(l=>l.id!==tmp.id));
       setToast(e.message||"레슨런을 저장하지 못했어요.");
@@ -376,9 +377,12 @@ export default function App(){
   };
   const editLesson=async(id,text)=>{
     const prev=lessons.find(l=>l.id===id); if(!prev||prev.text===text) return;
-    setLessons(p=>p.map(l=>l.id===id?{...l,text}:l));
+    setLessons(p=>p.map(l=>l.id===id?{...l,text,tags:extractTags(text)}:l));
     if(lessonMode!=="notion"||String(id).startsWith("tmp")) return;
-    try{ await api("/api/lessons",{method:"PATCH",body:JSON.stringify({id,text})}); }
+    try{
+      const r=await api("/api/lessons",{method:"PATCH",body:JSON.stringify({id,text})});
+      if(Array.isArray(r?.tags)) setLessons(p=>p.map(l=>l.id===id?{...l,tags:r.tags}:l));
+    }
     catch(e){ setLessons(p=>p.map(l=>l.id===id?prev:l)); setToast(e.message||"수정하지 못했어요."); }
   };
   /* 하루 평가 제출 — 별점과 레슨런을 함께 저장하고 카드를 접음 */
@@ -580,7 +584,7 @@ export default function App(){
                     );
                   })}
                 </div>
-                <p className="group-foot">오른쪽 숫자는 이번 주 체크 횟수예요.</p>
+                <p className="group-foot">오른쪽 숫자는 이번 주에 체크한 횟수예요.</p>
               </section>}
 
             {!evening&&<div style={{marginTop:26}}>{ratingCard}</div>}
@@ -590,12 +594,12 @@ export default function App(){
         {!booting&&tab==="review"&&(
           <div className="fade summary">
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
-              value={pace?pace.now:0} unit="회 체크" bars={dayChecks} max={Math.max(list.length,1)}/>
+              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" meta="이번 주" onOpen={()=>openSub("rating")}
-              value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="평균" empty="평가 없음" bars={weekRatings} max={5}/>
+              value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" bars={weekRatings} max={5}/>
             <SummaryCard icon="bulb" color="var(--purple)" title="레슨런" meta={latestLesson?shortDate(latestLesson.date):""} onOpen={()=>openSub("lessons")}
-              value={latestLesson?null:null} empty={latestLesson?null:"기록 없음"}
-              quote={latestLesson?.text} foot={`이번 주 ${thisWeekLessons.length}개`}/>
+              empty={latestLesson?null:"아직 없어요"} quote={latestLesson?.text}
+              foot={thisWeekLessons.length?`이번 주에 ${thisWeekLessons.length}개 남겼어요`:"이번 주에는 아직 없어요"}/>
           </div>
         )}
       </main>
@@ -614,7 +618,7 @@ export default function App(){
           <PaceCard p={pace}/>
           {list.length>0&&
             <section className="group">
-              <div className="group-head small"><h2>루틴별 기록, 최근 3주</h2></div>
+              <div className="group-head small"><h2>최근 3주 루틴 기록</h2></div>
               <div className="cells">
                 {list.map(h=><ItemRow key={h.id} st={itemStats(h)} today={today} onOpen={()=>openDetail(h.id)}/>)}
               </div>
@@ -639,13 +643,12 @@ export default function App(){
 
 /* ── 회고 하위 화면 — 푸시된 화면처럼 왼쪽 위 '‹ 회고' ── */
 function SubPage({title,onBack,children}){
-  useEffect(()=>{ const o=document.body.style.overflow; document.body.style.overflow="hidden"; return()=>{document.body.style.overflow=o;}; },[]);
   useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onBack();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onBack]);
   return(
     <div role="dialog" aria-modal="true" aria-label={title} className="sheet push" style={{zIndex:80}}>
       <header className="navbar scrolled">
         <div className="navbar-in">
-          <button className="btn back" onClick={onBack}><Chevron dir="l" size={22}/>회고</button>
+          <button className="btn glass-ico" onClick={onBack} aria-label="회고로 돌아가기"><Chevron dir="l" size={20}/></button>
           <span className="nav-title">{title}</span>
           <span/>
         </div>
@@ -687,7 +690,7 @@ function RatingHistory({ratings,today}){
   if(!days.length) return <p className="group-foot" style={{marginTop:20}}>아직 평가한 날이 없어요. 오늘 탭의 하루 평가하기에서 남길 수 있어요.</p>;
   return(
     <section className="group">
-      <div className="group-head small"><h2>최근 평가</h2></div>
+      <div className="group-head small"><h2>지난 평가</h2></div>
       <div className="cells">
         {days.map(d=>{const x=fromISO(d);return(
           <div key={d} className="cell"><div className="cell-body">
@@ -737,22 +740,18 @@ function LoadingView(){
 function PaceCard({p}){
   const [hi,setHi]=useState(null);
   if(!p) return null;
-  const {todayIdx,cur,prev,now,diff,onTrack,total,best,bestMon}=p;
+  const {todayIdx,cur,prev,now}=p;
   const W=560,H=96,PX=10,PT=10,PB=6;
   const last=DAYS.length-1;
   const max=Math.max(prev[last],now,1);
   const X=(i)=>PX+(W-PX*2)*i/last, Y=(v)=>PT+(H-PT-PB)*(1-v/max);
   const pts=(arr,n)=>arr.slice(0,n).map((v,i)=>`${X(i)},${Y(v)}`).join(" ");
-  const label=diff>0?`지난주 ${DAYS[todayIdx]}요일까지보다 ${diff}회 많아요`
-    :diff===0?`지난주 ${DAYS[todayIdx]}요일까지와 같아요`:`지난주 ${DAYS[todayIdx]}요일까지보다 ${-diff}회 적어요`;
-  const wk=bestMon&&weekOfMonth(bestMon);
   const pick=(e)=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;
     setHi(Math.max(0,Math.min(last,Math.round((x-PX)/((W-PX*2)/last)))));};
   return(<>
     <div className="card" style={{marginTop:8}}>
-      <div className="card-head" style={{color:"var(--blue)"}}><Icon name="check" size={17}/>이번 주 누적 체크</div>
+      <div className="card-head" style={{color:"var(--blue)"}}><Icon name="check" size={17}/>이번 주 체크</div>
       <div className="value"><span className="num">{now}</span><small>회</small></div>
-      <p className="card-note">{label}</p>
       <div style={{position:"relative",marginTop:14}} onPointerMove={pick} onPointerDown={pick}
         onPointerLeave={e=>{if(e.pointerType==="mouse")setHi(null);}}>
         {hi!=null&&
@@ -773,10 +772,6 @@ function PaceCard({p}){
       </div>
       <div className="axis" style={{padding:`6px ${PX/W*100}% 0`}}>
         {DAYS.map((d,i)=><span key={d} className={i===todayIdx?"on":undefined} style={{opacity:i>todayIdx?.45:1}}>{d}</span>)}
-      </div>
-      <div className="card-rows">
-        <div><span>현재 페이스로 목표 달성</span><span className="num">{onTrack}/{total}개</span></div>
-        {best>0&&<div><span>최고 기록 주</span><span className="num">{now>best?"이번 주":`${wk.m}월 ${wk.w}주차`}, {Math.max(best,now)}회</span></div>}
       </div>
     </div>
   </>);
@@ -842,7 +837,6 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
   const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+WORKDAYS-1));
   const startISO=toISO(addDays(fromISO(endISO),-(7*PAGE_WEEKS-1)));
   const md=(iso)=>{const d=fromISO(iso);return `${d.getFullYear()!==fromISO(today).getFullYear()?`${d.getFullYear()}년 `:""}${d.getMonth()+1}월 ${d.getDate()}일`;};
-  useEffect(()=>{ const o=document.body.style.overflow; document.body.style.overflow="hidden"; return()=>{document.body.style.overflow=o;}; },[]);
   useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onClose]);
 
   const byMonth=[]; for(const iso of st.records){const k=iso.slice(0,7);let g=byMonth[byMonth.length-1];if(!g||g.k!==k){g={k,items:[]};byMonth.push(g);}g.items.push(iso);}
@@ -856,7 +850,7 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
     <div role="dialog" aria-modal="true" aria-label={`${st.h.name} 기록`} className="sheet">
       <header className="navbar scrolled" style={{position:"sticky"}}>
         <div className="navbar-in">
-          <button className="btn back" onClick={onClose}><Chevron dir="l" size={22}/>{backLabel}</button>
+          <button className="btn glass-ico" onClick={onClose} aria-label={`${backLabel}(으)로 돌아가기`}><Chevron dir="l" size={20}/></button>
           <span className="nav-title">{st.h.name}</span>
           {isNotion
             ? <a className="btn txt" style={{justifySelf:"end"}} href={`https://www.notion.so/${String(st.h.id).replace(/-/g,"")}`} target="_blank" rel="noopener noreferrer" aria-label="노션에서 편집">편집</a>
@@ -876,10 +870,10 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 
         <section className="group" style={{marginTop:20}}>
           <div className="cells">
-            {row("연속",`${st.cur}${st.unit}`,`최고 ${st.best}${st.unit}`)}
-            {row("총 체크",`${st.total}회`,`${md(st.startISO)} 시작`)}
-            {row("이번 주",`${Math.min(st.wc,st.t)}/${st.t}`,st.wc>=st.t?"목표 달성":`${st.t-st.wc}회 남음`)}
-            {row("주간 달성률",st.rate==null?"–":`${Math.round(st.rate*100)}%`,st.elig?`최근 ${st.elig}주 중 ${st.ok}주`:"지난 기록 없음")}
+            {row("연속 기록",`${st.cur}${st.unit}`,`가장 길었던 건 ${st.best}${st.unit}`)}
+            {row("전체 체크",`${st.total}회`,`${md(st.startISO)}부터`)}
+            {row("이번 주",`${Math.min(st.wc,st.t)}/${st.t}`,st.wc>=st.t?"목표를 채웠어요":`${st.t-st.wc}회 남았어요`)}
+            {row("목표를 채운 주",st.elig?`${st.ok}주`:"–",st.elig?`최근 ${st.elig}주 가운데`:"아직 지난 기록이 없어요")}
           </div>
         </section>
 
@@ -950,7 +944,7 @@ function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
         <div className="cell">
           <span className="add-ico" aria-hidden="true"/>
           <div className="cell-body">
-            <input className="cell-input" value={draft} maxLength={200} placeholder="새로운 할 일"
+            <input className="cell-input" value={draft} maxLength={200} placeholder="할 일 추가"
               aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
             {draft.trim()&&<button className="btn txt strong" onClick={add}>추가</button>}
@@ -1004,7 +998,7 @@ function RatingCard({score,open,lessonCount,onToggle,onSubmit}){
             <div className="cell-body" style={{padding:"12px 16px 12px 0"}}>
               <textarea className="ta" rows={3} maxLength={500} value={text} onChange={e=>setText(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();submit();}}}
-                placeholder="레슨런: 오늘 배운 점, 다음에 다르게 할 점" aria-label="레슨런"/>
+                placeholder="오늘 배운 점이나 다음에 바꿔 볼 점을 적어 보세요" aria-label="레슨런"/>
             </div>
           </div>
           <div className="cell" style={{cursor:"default"}}>
@@ -1031,14 +1025,13 @@ function RatingTrend({ratings,today}){
   const curMon=mondayOf(fromISO(today));
   const weeks=[3,2,1,0].map(i=>weekDatesFrom(addDays(curMon,-7*i)));
   const avg=(ds)=>{const v=ds.map(d=>ratings[d]).filter(Boolean);return v.length?(v.reduce((a,b)=>a+b,0)/v.length):null;};
-  const cur=avg(weeks[3]), prev=avg(weeks[2]);
+  const cur=avg(weeks[3]);
   const f=(v)=>v==null?"–":v.toFixed(1);
   const W=560,H=72,G=18,BW=(W-G*3)/20-6;
   return(
     <div className="card">
-      <div className="card-head" style={{color:"var(--orange)"}}><Icon name="star" size={16}/>최근 4주</div>
-      <div className="value"><span className="num">{f(cur)}</span><small>이번 주 평균</small></div>
-      <p className="card-note">지난주 평균 {f(prev)}</p>
+      <div className="card-head" style={{color:"var(--orange)"}}><Icon name="star" size={16}/>이번 주 평점</div>
+      <div className="value"><span className="num">{f(cur)}</span>{cur!=null&&<small>점</small>}</div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",marginTop:14}} aria-hidden="true">
         {weeks.map((ds,wi)=>ds.map((d,di)=>{
           const x=wi*((W-G*3)/4+G)+di*((W-G*3)/20)+3, v=ratings[d]||0, h=v?Math.max(5,(H-2)*v/5):4;
@@ -1091,6 +1084,8 @@ function LessonsList({lessons,today,onEdit,onDelete}){
                   </div>
                 : <div className="cell-main">
                     <div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.text}</div>
+                    {(()=>{const tg=l.tags?.length?l.tags:extractTags(l.text);   // 태그 기능 전에 저장된 레슨런은 화면에서만 뽑아 보여줌
+                      return tg.length>0&&<div className="chips">{tg.map(t=><span key={t} className="chip">{t}</span>)}</div>;})()}
                     <div className="cell-sub">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
                   </div>}
               {edit?.id!==l.id&&
@@ -1118,29 +1113,33 @@ const CSS=`
     --bg:#F2F2F7;--cell:#FFFFFF;--label:#000000;--label2:rgba(60,60,67,.6);--label3:rgba(60,60,67,.3);
     --sep:rgba(60,60,67,.29);--fill:rgba(120,120,128,.16);--fill2:rgba(120,120,128,.08);--gray2:#AEAEB2;--gray3:#C7C7CC;
     --gray4:#D1D1D6;--blue:#007AFF;--blue-rgb:0,122,255;--green:#34C759;--orange:#FF9500;--red:#FF3B30;--purple:#AF52DE;
-    --bar:rgba(249,249,249,.86);--bar-top:rgba(242,242,247,.9);--banner:#FFF4E0;--banner-ink:#9A5B00;
+    --bar:rgba(249,249,249,.86);--bar-top:rgba(242,242,247,.9);--bg-0:rgba(242,242,247,0);
+    --glass:rgba(255,255,255,.72);--glass-edge:rgba(0,0,0,.06);--purple-rgb:175,82,222;--banner:#FFF4E0;--banner-ink:#9A5B00;
     color-scheme:light;
   }
   @media(prefers-color-scheme:dark){:root{
     --bg:#000000;--cell:#1C1C1E;--label:#FFFFFF;--label2:rgba(235,235,245,.6);--label3:rgba(235,235,245,.3);
     --sep:rgba(84,84,88,.65);--fill:rgba(120,120,128,.32);--fill2:rgba(120,120,128,.16);--gray2:#636366;--gray3:#48484A;
     --gray4:#3A3A3C;--blue:#0A84FF;--blue-rgb:10,132,255;--green:#30D158;--orange:#FF9F0A;--red:#FF453A;--purple:#BF5AF2;
-    --bar:rgba(22,22,24,.82);--bar-top:rgba(0,0,0,.86);--banner:#2E2310;--banner-ink:#FFC56B;
+    --bar:rgba(22,22,24,.82);--bar-top:rgba(0,0,0,.86);--bg-0:rgba(0,0,0,0);
+    --glass:rgba(44,44,46,.7);--glass-edge:rgba(255,255,255,.08);--purple-rgb:191,90,242;--banner:#2E2310;--banner-ink:#FFC56B;
     color-scheme:dark;
   }}
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);max-width:100%;overflow-x:clip}
+  html{scrollbar-gutter:stable both-edges}   /* 탭마다 길이가 달라 스크롤바가 생겼다 없어지며 화면이 밀리던 것 방지 */
   .app{min-height:100vh;color:var(--label);font-size:17px;line-height:1.3;letter-spacing:-0.01em;-webkit-font-smoothing:antialiased;
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Apple SD Gothic Neo","Pretendard",system-ui,sans-serif}
   .num{font-variant-numeric:tabular-nums}
   button,input,textarea{font-family:inherit;color:inherit;letter-spacing:inherit}
-  .wrap{max-width:600px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left)) calc(90px + max(10px,env(safe-area-inset-bottom))) max(16px,env(safe-area-inset-right))}
+  .wrap{max-width:600px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left)) calc(112px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-right))}
 
   /* 위쪽 막대 — 처음엔 투명, 스크롤하면 반투명 + 작은 제목 + 가는 선 */
-  .navbar{position:sticky;top:0;z-index:20;padding-top:env(safe-area-inset-top);background:var(--bar-top);
-    -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);transition:box-shadow .2s}
+  /* 위쪽 막대 — 선 없이 바탕색에서 아래로 흐려짐 (상태 바도 같은 바탕색) */
+  .navbar{position:sticky;top:0;z-index:20;padding-top:env(safe-area-inset-top);
+    background:linear-gradient(var(--bg) 0,var(--bg) 62%,var(--bg-0) 100%)}
   .navbar-in{max-width:600px;margin:0 auto;height:44px;padding:0 8px 0 16px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
-  .navbar.scrolled{box-shadow:0 .5px 0 var(--sep)}
+
   .nav-title{font-size:17px;font-weight:600;opacity:0;transition:opacity .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56vw}
   .navbar.scrolled .nav-title{opacity:1}
   .nav-actions{display:flex;align-items:center;gap:2px}
@@ -1152,12 +1151,15 @@ const CSS=`
   .btn.txt{color:var(--blue);font-size:17px;padding:6px 8px;text-decoration:none}
   .btn.txt.strong{font-weight:600}
   .group-side .btn.txt{font-size:15px;padding:0 0 0 12px}
-  .btn.nav-ico{color:var(--blue);width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:18px}
-  .btn.back{display:flex;align-items:center;gap:0;color:var(--blue);font-size:17px;margin-left:-10px;justify-self:start}
-  .btn.filled{background:var(--blue);color:#fff;font-size:17px;font-weight:600;border-radius:12px;padding:14px 16px}
+  .btn.nav-ico{color:var(--label);width:40px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:20px}
+  .navbar .btn.nav-ico,.btn.glass-ico{background:var(--glass);box-shadow:0 1px 6px rgba(0,0,0,.07),inset 0 0 0 .5px var(--glass-edge);
+    -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+  .nav-actions{gap:8px!important}
+  .btn.glass-ico{color:var(--label);width:40px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:20px;justify-self:start}
+  .btn.filled{background:var(--blue);color:#fff;font-size:17px;font-weight:600;border-radius:999px;padding:15px 18px}
   .btn:focus-visible,.hit:focus-visible,.cell.tap:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}
 
-  .banner{background:var(--banner);color:var(--banner-ink);border-radius:10px;padding:12px 16px;font-size:15px;line-height:1.4;margin-top:14px}
+  .banner{background:var(--banner);color:var(--banner-ink);border-radius:20px;padding:12px 16px;font-size:15px;line-height:1.4;margin-top:14px}
 
   /* 인셋 그룹 목록 */
   .group{margin-top:26px}
@@ -1167,11 +1169,11 @@ const CSS=`
   .group-head.small h2{font-size:15px;font-weight:400;color:var(--label2)}
   .group-side{display:flex;align-items:baseline;font-size:15px;color:var(--label2)}
   .group-foot{font-size:13px;color:var(--label2);margin:8px 16px 0;line-height:1.4}
-  .cells{background:var(--cell);border-radius:10px;overflow:hidden}
-  .cell{display:flex;align-items:center;gap:12px;width:100%;padding-left:16px;text-align:left;color:inherit;font-size:17px;min-height:44px;position:relative}
+  .cells{background:var(--cell);border-radius:26px;overflow:hidden}
+  .cell{display:flex;align-items:center;gap:14px;width:100%;padding-left:18px;text-align:left;color:inherit;font-size:17px;min-height:52px;position:relative}
   .cell.tap{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
   .cell.tap:active{background:var(--fill2)}
-  .cell-body{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px 11px 0;
+  .cell-body{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px 14px 0;
     box-shadow:inset 0 -.5px 0 var(--sep)}
   .cell:last-child>.cell-body{box-shadow:none}
   .cell-main{flex:1;min-width:0}
@@ -1194,28 +1196,28 @@ const CSS=`
     .c-green{--t-bg:#243D30}.c-blue{--t-bg:#143A4E}.c-purple{--t-bg:#3C2D49}.c-pink{--t-bg:#4E2C3C}.c-red{--t-bg:#522E2A}}
   .disclosure{color:var(--gray3);display:flex;transition:transform .2s}
   .streak{display:inline-flex;align-items:center;gap:2px;color:var(--orange)}
-  .lead-ico{width:29px;height:29px;border-radius:7px;color:#fff;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .lead-ico{width:30px;height:30px;border-radius:9px;color:#fff;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
   .add-ico{width:24px;height:24px;border-radius:50%;background:var(--blue);flex:0 0 auto;position:relative}
   .add-ico::before,.add-ico::after{content:"";position:absolute;left:50%;top:50%;background:#fff;border-radius:1px;transform:translate(-50%,-50%)}
   .add-ico::before{width:12px;height:2px}.add-ico::after{width:2px;height:12px}
 
   /* 미리 알림 같은 둥근 체크 */
   .hit{display:flex;padding:8px;margin:-8px;cursor:pointer;border-radius:8px}
-  .cbox{width:22px;height:22px;border-radius:6px;border:1.5px solid var(--gray3);flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  .cbox{width:24px;height:24px;border-radius:8px;border:1.5px solid var(--gray3);flex:0 0 auto;display:flex;align-items:center;justify-content:center;
     transition:background .15s,border-color .15s}
   .cbox.on{background:var(--blue);border-color:var(--blue)}
   .cbox.on svg{animation:pop .22s cubic-bezier(.3,1.5,.6,1)}
   @keyframes pop{from{transform:scale(.3)}}
 
   /* 요약 카드 (건강 앱처럼) */
-  .card{background:var(--cell);border-radius:12px;padding:14px 16px 16px;margin-top:10px}
+  .card{background:var(--cell);border-radius:26px;padding:18px 20px 18px;margin-top:12px}
   .card-head{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600}
   .value{display:flex;align-items:baseline;gap:4px;margin-top:10px}
   .value .num{font-family:ui-rounded,"SF Pro Rounded",-apple-system,"Pretendard",sans-serif;font-size:34px;font-weight:700;line-height:1}
   .value small{font-size:15px;font-weight:600;color:var(--label2)}
   /* 회고 요약 카드 — 건강 앱 요약처럼 넉넉한 둥근 카드 */
   .summary{margin-top:18px;display:flex;flex-direction:column;gap:12px}
-  .btn.sum-card{display:block;width:100%;text-align:left;background:var(--cell);border-radius:20px;padding:16px 18px 18px;color:inherit;font-size:17px}
+  .btn.sum-card{display:block;width:100%;text-align:left;background:var(--cell);border-radius:28px;padding:18px 20px 20px;color:inherit;font-size:17px}
   .btn.sum-card:active{transform:scale(.985);transition:transform .1s}
   .sum-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
   .sum-title{display:flex;align-items:center;gap:6px;font-size:17px;font-weight:600}
@@ -1229,10 +1231,6 @@ const CSS=`
   .sum-quote{font-size:19px;font-weight:600;line-height:1.35;margin:0;word-break:keep-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .sum-foot{font-size:15px;color:var(--label2);margin-top:6px}
   .sum-bars{flex:0 0 auto}
-  .card-rows{margin:14px -16px -16px 0;padding-left:0}
-  .card-rows>div{display:flex;justify-content:space-between;gap:12px;padding:11px 16px 11px 0;font-size:15px;box-shadow:inset 0 .5px 0 var(--sep)}
-  .card-rows>div>span:last-child{color:var(--label2)}
-  .card-note{font-size:15px;color:var(--label2);margin:6px 0 0;line-height:1.35}
   .axis{display:flex;justify-content:space-between;font-size:12px;color:var(--label2)}
   .axis>span{width:0;display:flex;justify-content:center;white-space:nowrap}
   .axis[style*="grid"]>span{width:auto}
@@ -1251,22 +1249,25 @@ const CSS=`
 
   .ta{width:100%;resize:none;border:none;outline:none;background:transparent;font-size:17px;line-height:1.4;padding:0}
   .btn.more{color:var(--label3);width:32px;height:32px;display:flex;align-items:center;justify-content:center;margin:-6px -4px 0 0}
-  .menu{position:absolute;right:0;top:32px;z-index:5;min-width:140px;background:var(--bar);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);
-    border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.18);overflow:hidden}
+  .menu{position:absolute;right:0;top:32px;z-index:5;min-width:150px;background:var(--bar);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);
+    border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.18);overflow:hidden}
   .menu .btn{display:block;width:100%;text-align:left;color:var(--red);font-size:17px;padding:11px 16px}
   .menu .btn.plain{color:var(--label);box-shadow:inset 0 -.5px 0 var(--sep)}
   .btn.filled:disabled{opacity:.35}
 
   /* 아래 탭 막대 */
-  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;gap:0;
-    padding:6px env(safe-area-inset-right) max(10px,env(safe-area-inset-bottom)) env(safe-area-inset-left);background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
-    box-shadow:0 -.5px 0 var(--sep)}
-  .tab{flex:0 1 160px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--gray2);font-size:10px;font-weight:500;letter-spacing:0;padding:2px 0}
-  .tab.on{color:var(--blue)}
+  /* 아래 탭 막대 — 홈 인디케이터 위에 떠 있는 유리 캡슐, 선택한 탭은 안쪽 알약으로 */
+  .tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:max(14px,env(safe-area-inset-bottom));z-index:30;display:flex;gap:4px;padding:5px;
+    width:min(260px,calc(100% - 48px));border-radius:999px;background:var(--glass);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);
+    box-shadow:0 8px 30px rgba(0,0,0,.12),inset 0 0 0 .5px var(--glass-edge)}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--label);font-size:11px;font-weight:600;letter-spacing:0;padding:7px 0 6px;border-radius:999px;transition:background .2s,color .2s}
+  .tab.on{color:var(--blue);background:var(--fill2)}
 
-  .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg)}
-  .toast{position:fixed;left:50%;bottom:calc(66px + max(10px,env(safe-area-inset-bottom)));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
-    background:rgba(30,30,32,.92);color:#fff;border-radius:14px;padding:12px 16px;font-size:15px;line-height:1.4;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+  .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:var(--bg)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{font-size:13px;line-height:1;padding:5px 10px;border-radius:999px;background:rgba(var(--purple-rgb),.12);color:var(--purple)}
+  .toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
+    background:rgba(30,30,32,.92);color:#fff;border-radius:999px;padding:12px 16px;font-size:15px;line-height:1.4;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
   .sk{border-radius:6px;background:var(--fill);animation:sk 1.4s ease-in-out infinite}
   @keyframes sk{0%,100%{opacity:1}50%{opacity:.5}}
   .fade{animation:fade .2s ease}

@@ -1,5 +1,5 @@
 /* /api/lessons — 레슨런 (그날 배운 것 한 줄)
-   GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  { lessons: [{ id, date, text }] }
+   GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  { lessons: [{ id, date, text, tags }] }
    POST   { date, text }                  →  { id }   (행 생성)
    PATCH  { id, text }                    →  내용 수정
    DELETE { id }                          →  행 보관 처리
@@ -7,7 +7,8 @@
    DB는 NOTION_LESSONS_DB, 없으면 Integration이 볼 수 있는 DB 중 제목이
    '레슨런'(또는 lesson)인 것을 찾아 씁니다. */
 
-import { CFG, notion, queryAll, dbProps, findProp, requireToken, fail } from "./_notion.js";
+import { CFG, notion, queryAll, dbProps, findProp, byName, requireToken, fail } from "./_notion.js";
+import { extractTags } from "./_keywords.js";
 
 let cached = null;
 async function lessonsDb() {
@@ -37,7 +38,9 @@ async function lessonsDb() {
     e.status = 500;
     throw e;
   }
-  cached = { id, pTitle, pDate };
+  /* 태그(다중 선택)는 있을 때만 씀 — 저장할 때 내용에서 키워드를 뽑아 자동으로 붙임 */
+  const pTags = byName(props, ["태그", "Tags", "키워드"], ["multi_select"], used);
+  cached = { id, pTitle, pDate, pTags };
   return cached;
 }
 
@@ -65,6 +68,7 @@ export default async function handler(req, res) {
           id: page.id,
           date: page.properties?.[L.pDate]?.date?.start || "",
           text: plain(page.properties?.[L.pTitle]?.title),
+          tags: L.pTags ? (page.properties?.[L.pTags]?.multi_select || []).map((o) => o.name) : [],
         }))
         .filter((l) => l.date && l.text);
       res.setHeader("Cache-Control", "no-store");
@@ -74,6 +78,7 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const text = String(b.text || "").trim().slice(0, 500);
       if (!text || !isDate(b.date)) return res.status(400).json({ error: "text와 date(YYYY-MM-DD)가 필요합니다." });
+      const tags = extractTags(text);
       const page = await notion("/pages", {
         method: "POST",
         body: {
@@ -81,20 +86,25 @@ export default async function handler(req, res) {
           properties: {
             [L.pTitle]: { title: [{ text: { content: text } }] },
             [L.pDate]: { date: { start: b.date } },
+            ...(L.pTags ? { [L.pTags]: { multi_select: tags.map((name) => ({ name })) } } : {}),
           },
         },
       });
-      return res.status(200).json({ id: page.id });
+      return res.status(200).json({ id: page.id, tags: L.pTags ? tags : [] });
     }
 
     if (req.method === "PATCH") {
       const text = String(b.text || "").trim().slice(0, 500);
       if (!b.id || !text) return res.status(400).json({ error: "id와 text가 필요합니다." });
+      const tags = extractTags(text);
       await notion(`/pages/${b.id}`, {
         method: "PATCH",
-        body: { properties: { [L.pTitle]: { title: [{ text: { content: text } }] } } },
+        body: { properties: {
+          [L.pTitle]: { title: [{ text: { content: text } }] },
+          ...(L.pTags ? { [L.pTags]: { multi_select: tags.map((name) => ({ name })) } } : {}),   // 고치면 태그도 다시 뽑음
+        } },
       });
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, tags: L.pTags ? tags : [] });
     }
 
     if (req.method === "DELETE") {
