@@ -1,5 +1,5 @@
 /* /api/tasks — 오늘 할 일 (노션 과업 DB에서 마감일이 그날인 과업)
-   GET    ?date=YYYY-MM-DD        →  { tasks: [{ id, title, done, priority, url }], tasksDb }
+   GET    ?date=YYYY-MM-DD        →  { tasks: [{ id, title, done, priority, priorityColor, url }], tasksDb }
    POST   { title, date }         →  { task }   (마감일 = date 로 새 과업)
    PATCH  { id, done?, title? }   →  { ok }     (완료 체크·이름 수정)
 
@@ -36,6 +36,8 @@ const toTask = (P) => (page) => ({
   title: plain(page.properties?.[P.pTitle]?.title) || "(제목 없음)",
   done: !!page.properties?.[P.pDone]?.checkbox,
   priority: P.pPriority ? readText(page.properties?.[P.pPriority]) : "",
+  /* 노션 선택지 색 그대로 (default·gray·brown·orange·yellow·green·blue·purple·pink·red) */
+  priorityColor: P.pPriority ? (() => { const v = page.properties?.[P.pPriority]; return v?.select?.color || v?.status?.color || "default"; })() : "",
   url: page.url || "",
 });
 

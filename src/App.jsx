@@ -906,7 +906,8 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 }
 
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
-const PRI_MARK={핵심:"!!!",높음:"!!",보통:"!"};
+/* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
+const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
 function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
   const [draft,setDraft]=useState("");
   const [edit,setEdit]=useState(null);   // { id, text }
@@ -940,9 +941,9 @@ function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
                 ? <input className="cell-input" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
                     onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
                     onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
-                : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>
-                    {PRI_MARK[t.priority]&&<span className="pri" aria-label={`우선순위 ${t.priority}`}>{PRI_MARK[t.priority]} </span>}{t.title}
-                  </button>}
+                : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
+              {t.priority&&edit?.id!==t.id&&
+                <span className={"tag c-"+(NOTION_COLORS.includes(t.priorityColor)?t.priorityColor:"default")} aria-label={`우선순위 ${t.priority}`}>{t.priority}</span>}
             </div>
           </div>
         ))}
@@ -1182,7 +1183,15 @@ const CSS=`
   .cell-input{flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:17px;padding:0}
   .cell-input::placeholder,.ta::placeholder{color:var(--label3)}
   .btn.cell-title.edit{flex:1;text-align:left;cursor:text}
-  .pri{color:var(--blue);font-weight:600}
+  /* 우선순위 태그 — 노션 선택지 색 팔레트 */
+  .tag{flex:0 0 auto;font-size:13px;line-height:1;padding:4px 7px;border-radius:5px;color:var(--t-ink);background:var(--t-bg);white-space:nowrap}
+  .c-default{--t-bg:rgba(84,72,49,.08);--t-ink:#32302C}.c-gray{--t-bg:#F1F1EF;--t-ink:#787774}.c-brown{--t-bg:#F4EEEE;--t-ink:#976D57}
+  .c-orange{--t-bg:#FBECDD;--t-ink:#CC782F}.c-yellow{--t-bg:#FBF3DB;--t-ink:#C29343}.c-green{--t-bg:#EDF3EC;--t-ink:#548164}
+  .c-blue{--t-bg:#E7F3F8;--t-ink:#337EA9}.c-purple{--t-bg:#F7F3F8;--t-ink:#9065B0}.c-pink{--t-bg:#FBF2F5;--t-ink:#C14C8A}.c-red{--t-bg:#FDEBEC;--t-ink:#C4554D}
+  @media(prefers-color-scheme:dark){
+    .tag{--t-ink:rgba(255,255,255,.86)}
+    .c-default{--t-bg:#373737}.c-gray{--t-bg:#2F2F2F}.c-brown{--t-bg:#4A3228}.c-orange{--t-bg:#5C3B23}.c-yellow{--t-bg:#564328}
+    .c-green{--t-bg:#243D30}.c-blue{--t-bg:#143A4E}.c-purple{--t-bg:#3C2D49}.c-pink{--t-bg:#4E2C3C}.c-red{--t-bg:#522E2A}}
   .disclosure{color:var(--gray3);display:flex;transition:transform .2s}
   .streak{display:inline-flex;align-items:center;gap:2px;color:var(--orange)}
   .lead-ico{width:29px;height:29px;border-radius:7px;color:#fff;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
