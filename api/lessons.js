@@ -1,6 +1,7 @@
 /* /api/lessons — 레슨런 (그날 배운 것 한 줄)
    GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  { lessons: [{ id, date, text }] }
    POST   { date, text }                  →  { id }   (행 생성)
+   PATCH  { id, text }                    →  내용 수정
    DELETE { id }                          →  행 보관 처리
 
    DB는 NOTION_LESSONS_DB, 없으면 Integration이 볼 수 있는 DB 중 제목이
@@ -86,13 +87,23 @@ export default async function handler(req, res) {
       return res.status(200).json({ id: page.id });
     }
 
+    if (req.method === "PATCH") {
+      const text = String(b.text || "").trim().slice(0, 500);
+      if (!b.id || !text) return res.status(400).json({ error: "id와 text가 필요합니다." });
+      await notion(`/pages/${b.id}`, {
+        method: "PATCH",
+        body: { properties: { [L.pTitle]: { title: [{ text: { content: text } }] } } },
+      });
+      return res.status(200).json({ ok: true });
+    }
+
     if (req.method === "DELETE") {
       if (!b.id) return res.status(400).json({ error: "id가 필요합니다." });
       await notion(`/pages/${b.id}`, { method: "PATCH", body: { archived: true } });
       return res.status(200).json({ ok: true });
     }
 
-    res.status(405).json({ error: "GET, POST, DELETE만 지원합니다." });
+    res.status(405).json({ error: "GET, POST, PATCH, DELETE만 지원합니다." });
   } catch (e) {
     fail(res, e);
   }
