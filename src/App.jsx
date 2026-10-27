@@ -434,14 +434,8 @@ export default function App(){
     }
     catch(e){ setLessons(p=>p.map(l=>l.id===id?prev:l)); setToast(e.message||"수정하지 못했어요."); }
   };
-  /* 하루 평가 제출 — 별점과 작성 중인 레슨런을 함께 저장하고 카드를 접음 */
-  const submitDay=async(score)=>{
-    const date=selDate;
-    if(score!==(ratings[date]||0)) await setRating(date,score);
-    await saveDraft(date);   // 작성 화면에서 저장하지 않고 남겨 둔 레슨런도 함께
-    setRatingToggle(t=>({...t,[date]:false}));
-    setToast("제출했어요");
-  };
+  /* 레슨런 편집 — 목록에서 누르면 작성 화면과 같은 시트로 엶 */
+  const [editingLesson,setEditingLesson]=useState(null);
   const delLesson=async(id)=>{
     const prev=lessons;
     setLessons(p=>p.filter(l=>l.id!==id));
@@ -534,7 +528,7 @@ export default function App(){
     <RatingCard key={selDate} score={ratings[selDate]||0} open={ratingOpen}
       lessonCount={lessons.filter(l=>l.date===selDate).length} draft={draftOf(selDate)}
       onToggle={()=>setRatingToggle(t=>({...t,[selDate]:!ratingOpen}))}
-      onWrite={()=>setEditorOpen(true)} onSubmit={submitDay}/>
+      onWrite={()=>setEditorOpen(true)} onRate={(n)=>setRating(selDate,n)}/>
   );
 
   /* 선택한 날짜 하루의 진행 */
@@ -706,13 +700,16 @@ export default function App(){
         <SubPage title="레슨런" onBack={goBack}>
           {lessonNote&&<div className="banner">{lessonNote}</div>}
           {lessonMode==="loading"?<SkeletonList rows={4} tall/>
-            :<LessonsList lessons={lessons} today={today} onEdit={editLesson} onDelete={delLesson}/>}
+            :<LessonsList lessons={lessons} today={today} onOpen={setEditingLesson}/>}
         </SubPage>}
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
         backLabel={subView==="routine"?"루틴":"회고"} onClose={goBack}/>}
       {editorOpen&&<LessonEditor dateLabel={`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`}
         draft={draftOf(selDate)} setDraft={(v)=>setDraftFor(selDate,v)} suggest={suggestTries} onClose={()=>setEditorOpen(false)}
         onSave={async()=>{const date=selDate;const n=await saveDraft(date);setEditorOpen(false);if(n)setToast("레슨런을 저장했어요");}}/>}
+      {editingLesson&&<LessonEditSheet lesson={editingLesson} suggest={suggestTries} onClose={()=>setEditingLesson(null)}
+        onSave={async(text,tryText)=>{await editLesson(editingLesson.id,text,tryText);setEditingLesson(null);}}
+        onDelete={()=>{delLesson(editingLesson.id);setEditingLesson(null);setToast("레슨런을 삭제했어요");}}/>}
       {toast&&<div className="toast fade" role="status">{toast}</div>}
     </div>
   );
@@ -1162,18 +1159,9 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
 }
 
 /* ── 하루 평가 ── 접힌 상태: 한 줄 / 펼친 상태: 별 5개 + '레슨런 쓰기' + 제출하기 */
-function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
-  const [pick,setPick]=useState(score);
-  const [busy,setBusy]=useState(false);
-  useEffect(()=>{setPick(score);},[score,open]);
+/* 별을 누르면 바로 저장 (같은 별을 다시 누르면 지움) — 제출 버튼 없음 */
+function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onRate}){
   const nD=draft.cards.filter(c=>c.p.trim()||c.t.trim()).length;
-  const dirty=pick!==score||nD>0;
-  const submit=async()=>{
-    if(!dirty||busy) return;
-    setBusy(true);
-    try{ await onSubmit(pick); }catch(e){}
-    finally{ setBusy(false); }
-  };
   const writeSummary=[lessonCount>0&&`${lessonCount}개 저장됨`,nD>0&&`${nD}개 작성 중`].filter(Boolean).join(" · ");
   return(
     <section className="group" style={{marginTop:0}}>
@@ -1194,8 +1182,8 @@ function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
             <div className="cell-body" style={{justifyContent:"center",padding:"10px 16px 12px 0"}}>
               <div role="radiogroup" aria-label="하루 평점" style={{display:"flex",gap:6}}>
                 {[1,2,3,4,5].map(n=>(
-                  <button key={n} role="radio" aria-checked={pick===n} aria-label={`${n}점`} className={"btn star"+(n<=pick?" on":"")}
-                    onClick={()=>setPick(p=>p===n?0:n)}><StarSvg size={36}/></button>
+                  <button key={n} role="radio" aria-checked={score===n} aria-label={`${n}점`} className={"btn star"+(n<=score?" on":"")}
+                    onClick={()=>onRate(score===n?0:n)}><StarSvg size={36}/></button>
                 ))}
               </div>
             </div>
@@ -1210,11 +1198,6 @@ function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
               <span className="disclosure"><Chevron size={14}/></span>
             </div>
           </button>
-          <div className="cell" style={{cursor:"default"}}>
-            <div className="cell-body" style={{padding:"10px 16px 12px 0"}}>
-              <button className="btn filled" style={{width:"100%"}} disabled={!dirty||busy} onClick={submit}>{busy?"제출 중":"제출하기"}</button>
-            </div>
-          </div>
         </>}
       </div>
     </section>
@@ -1226,7 +1209,7 @@ function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
    제안은 넣기/닫기를 누를 때까지 그대로 둠(입력 중에 생겼다 없어지지 않게). 저장은 이 화면에서 바로 */
 let cardSeq=0;
 const newCard=()=>({id:`c${Date.now().toString(36)}${cardSeq++}`,p:"",t:""});
-function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
+function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,single}){
   const [blank]=useState(newCard);
   const cards=draft.cards.length?draft.cards:[blank];
   const [sugs,setSugs]=useState({});   // { cardId: { for: 상황/문제, text } }
@@ -1235,7 +1218,8 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
   const asked=useRef({});               // { cardId: 마지막으로 제안을 받은 상황/문제 }
   const refs=useRef({});
   const [focusId,setFocusId]=useState(null);
-  useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onClose]);
+  /* 뒤에 깔린 하위 화면까지 닫히지 않도록 먼저 받아서 멈춤 */
+  useEffect(()=>{const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};document.addEventListener("keydown",esc,true);return()=>document.removeEventListener("keydown",esc,true);},[onClose]);
   useEffect(()=>{if(!focusId)return;const el=refs.current[focusId];if(el){el.focus();el.scrollIntoView?.({block:"center",behavior:"smooth"});}setFocusId(null);},[focusId]);
   const grow=(el)=>{if(!el)return;el.style.height="auto";el.style.height=el.scrollHeight+"px";};
   useEffect(()=>{Object.values(refs.current).forEach(grow);});
@@ -1271,7 +1255,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
             <div className="lfield">
               <div className="lfield-head">
                 <span className="lfield-label" style={{color:"var(--red)"}}>상황/문제</span>
-                {(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
+                {!single&&(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
               </div>
               <textarea ref={el=>{refs.current[c.id+"p"]=el;}} className="ta line" rows={1} value={c.p} maxLength={500}
                 placeholder="있었던 상황이나 문제를 구체적으로" aria-label={`상황/문제 ${i+1}`}
@@ -1284,6 +1268,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
                 placeholder={showSug?"직접 쓰거나 아래 제안을 넣어요":"다음에 바꿔 볼 행동"} aria-label={`해볼 것 ${i+1}`}
                 onChange={e=>patch(c.id,{t:e.target.value})}
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();
+                  if(single)return;
                   if(i===cards.length-1){if(c.p.trim()||c.t.trim())add();}else setFocusId(cards[i+1].id+"p");}}}/>
               {showSug&&
                 <div className="lsug" role="group" aria-label="해볼 것 제안">
@@ -1296,7 +1281,9 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
                 </div>}
             </div>
           </section>);})}
-        <button className="btn ladd" onClick={add}><span className="add-ico" aria-hidden="true"/>레슨런 추가</button>
+        {!single&&<button className="btn ladd" onClick={add}><span className="add-ico" aria-hidden="true"/>레슨런 추가</button>}
+        {onDelete&&<div className="cells" style={{marginTop:24}}>
+          <button className="btn cell tap" style={{color:"var(--red)"}} onClick={onDelete}><div className="cell-body">레슨런 삭제</div></button></div>}
       </div>
     </div>
   );
@@ -1336,70 +1323,39 @@ function RatingTrend({ratings,today}){
   );
 }
 
-/* ── 레슨런 목록 ── 주차별로 모아 보고, ⋯ 메뉴에서 수정·삭제 (쓰기는 오늘 탭의 하루 평가하기에서) */
-function LessonsList({lessons,today,onEdit,onDelete}){
-  const [menu,setMenu]=useState(null);   // 열린 ⋯ 메뉴의 레슨런 id
-  const [edit,setEdit]=useState(null);   // { id, text }
-  useEffect(()=>{
-    if(!menu) return;
-    const close=()=>setMenu(null);
-    const esc=(e)=>{if(e.key==="Escape")close();};
-    document.addEventListener("click",close); document.addEventListener("keydown",esc);
-    return()=>{document.removeEventListener("click",close);document.removeEventListener("keydown",esc);};
-  },[menu]);
-  const save=()=>{const v=edit.text.trim(),t=edit.try.trim();if(v||t)onEdit(edit.id,v,t);setEdit(null);};
+/* ── 레슨런 편집 — 작성 화면과 같은 시트에 카드 한 장 ── */
+function LessonEditSheet({lesson,suggest,onClose,onSave,onDelete}){
+  const [draft,setDraft]=useState({cards:[{id:"e"+lesson.id,p:lesson.text||"",t:lesson.try||""}]});
+  const d=fromISO(lesson.date);
+  return <LessonEditor single dateLabel={`${d.getMonth()+1}월 ${d.getDate()}일 ${wdOf(lesson.date)}요일`} draft={draft} setDraft={setDraft}
+    suggest={suggest} onClose={onClose} onDelete={onDelete}
+    onSave={async()=>{const c=draft.cards[0];await onSave(c.p.trim(),c.t.trim());}}/>;
+}
+
+/* ── 레슨런 목록 ── 날짜별로 묶고(날짜는 그룹 머리에 한 번), 줄 = 상황/문제 + 해볼 것 한 줄. 누르면 편집 시트 */
+function LessonsList({lessons,today,onOpen}){
   const groups=[];
   for(const l of [...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)){
-    const k=toISO(mondayOf(fromISO(l.date)));
-    let g=groups[groups.length-1]; if(!g||g.k!==k){g={k,items:[]};groups.push(g);} g.items.push(l);
+    let g=groups[groups.length-1]; if(!g||g.date!==l.date){g={date:l.date,items:[]};groups.push(g);} g.items.push(l);
   }
-  const curK=toISO(mondayOf(fromISO(today)));
   if(!groups.length) return <p className="group-foot" style={{marginTop:20}}>아직 레슨런이 없어요. 오늘 탭의 하루 평가하기에서 남길 수 있어요.</p>;
-  return groups.map(g=>{const wk=weekOfMonth(g.k);return(
-    <section key={g.k} className="group">
-      <div className="group-head small"><h2>{g.k===curK?"이번 주":`${wk.m}월 ${wk.w}주차`}</h2><span className="group-side num">{g.items.length}개</span></div>
+  const label=(iso)=>{const x=fromISO(iso);return `${iso===today?"오늘 · ":""}${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
+  return groups.map(g=>(
+    <section key={g.date} className="group">
+      <div className="group-head small"><h2>{label(g.date)}</h2></div>
       <div className="cells">
-        {g.items.map(l=>{const d=fromISO(l.date);return(
-          <div key={l.id} className="cell" style={{cursor:"default",alignItems:"flex-start"}}>
-            <div className="cell-body" style={{alignItems:"flex-start"}}>
-              {edit?.id===l.id
-                ? <div className="cell-main">
-                    {[["text","상황/문제","var(--red)"],["try","해볼 것","var(--blue)"]].map(([k,lb,col],j)=>(
-                      <div key={k} style={{marginTop:j?10:0}}>
-                        <div className="lfield-label" style={{color:col}}>{lb}</div>
-                        <textarea className="ta" rows={2} autoFocus={!j} maxLength={1000} value={edit[k]} aria-label={`${lb} 수정`}
-                          onChange={e=>setEdit(x=>({...x,[k]:e.target.value}))}
-                          onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}if(e.key==="Escape")setEdit(null);}}/>
-                      </div>))}
-                    <div style={{display:"flex",justifyContent:"flex-end",gap:4,marginTop:4}}>
-                      <button className="btn txt" onClick={()=>setEdit(null)}>취소</button>
-                      <button className="btn txt strong" disabled={!edit.text.trim()&&!edit.try.trim()} onClick={save}>저장</button>
-                    </div>
-                  </div>
-                : <div className="cell-main">
-                    {l.text&&<div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.text}</div>}
-                    {l.try&&<div className="ltry"><span className="lfield-label" style={{color:"var(--blue)"}}>해볼 것</span>
-                      <div style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.try}</div></div>}
-                    {(()=>{const tg=l.tags?.length?l.tags:extractTags(`${l.text} ${l.try||""}`);   // 태그 기능 전에 저장된 레슨런은 화면에서만 뽑아 보여줌
-                      return tg.length>0&&<div className="chips">{tg.map(t=><span key={t} className="chip">{t}</span>)}</div>;})()}
-                    <div className="cell-sub">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
-                  </div>}
-              {edit?.id!==l.id&&
-                <div style={{position:"relative",flex:"0 0 auto"}}>
-                  <button className="btn more" aria-label="더보기" aria-haspopup="menu" aria-expanded={menu===l.id}
-                    onClick={e=>{e.stopPropagation();setMenu(m=>m===l.id?null:l.id);}}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="7.6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="16.4" cy="12" r="1.3" fill="currentColor"/></svg>
-                  </button>
-                  {menu===l.id&&
-                    <div role="menu" className="menu" onClick={e=>e.stopPropagation()}>
-                      <button role="menuitem" className="btn plain" onClick={()=>{setMenu(null);setEdit({id:l.id,text:l.text,try:l.try||""});}}>수정</button>
-                      <button role="menuitem" className="btn" onClick={()=>{setMenu(null);onDelete(l.id);}}>삭제</button>
-                    </div>}
-                </div>}
+        {g.items.map(l=>(
+          <button key={l.id} className="btn cell tap" style={{alignItems:"flex-start"}} onClick={()=>onOpen(l)}>
+            <div className="cell-body" style={{alignItems:"flex-start",padding:"12px 16px 12px 0"}}>
+              <div className="cell-main">
+                {l.text&&<div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.4}}>{l.text}</div>}
+                {l.try&&<div className={"ltry"+(l.text?"":" solo")}><span className="lfield-label" style={{color:"var(--blue)"}}>해볼 것</span>{l.try}</div>}
+              </div>
+              <span className="disclosure" style={{marginTop:2}}><Chevron size={14}/></span>
             </div>
-          </div>);})}
+          </button>))}
       </div>
-    </section>);});
+    </section>));
 }
 
 const CSS=`
@@ -1544,11 +1500,6 @@ const CSS=`
   .stars{display:inline-flex;gap:1px;line-height:0}
 
   .ta{width:100%;resize:none;border:none;outline:none;background:transparent;font-size:17px;line-height:1.4;padding:0}
-  .btn.more{color:var(--label3);width:32px;height:32px;display:flex;align-items:center;justify-content:center;margin:-6px -4px 0 0}
-  .menu{position:absolute;right:0;top:32px;z-index:5;min-width:150px;background:var(--bar);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);
-    border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.18);overflow:hidden}
-  .menu .btn{display:block;width:100%;text-align:left;color:var(--red);font-size:17px;padding:11px 16px}
-  .menu .btn.plain{color:var(--label);box-shadow:inset 0 -.5px 0 var(--sep)}
   .btn.filled:disabled{opacity:.35}
 
   /* 아래 탭 막대 */
@@ -1560,7 +1511,6 @@ const CSS=`
   .tab.on{color:var(--blue);background:var(--fill2)}
 
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:var(--bg)}
-  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .prio-row{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 14px 56px;margin-top:-4px}
   .prio-row .btn.tag{font-size:14px;padding:6px 10px;border-radius:8px;opacity:.55;box-shadow:inset 0 0 0 1.5px transparent}
   .prio-row .btn.tag.sel{opacity:1;box-shadow:inset 0 0 0 1.5px var(--t-ink)}
@@ -1582,14 +1532,14 @@ const CSS=`
   .btn.ladd{display:flex;align-items:center;gap:12px;min-height:44px;margin-top:6px;padding:0 18px;color:var(--blue);font-size:17px}
   .btn.ladd:active{opacity:.5}
   .lfield-head .btn.line-x{margin:-4px -6px -4px 0}
-  .ltry{margin-top:8px;padding:8px 12px;border-radius:12px;background:var(--fill2);font-size:16px}
-  .ltry .lfield-label{display:block;margin-bottom:2px}
+  .ltry{margin-top:4px;font-size:15px;line-height:1.4;color:var(--label2);white-space:pre-wrap}
+  .ltry .lfield-label{margin-right:6px}
+  .ltry.solo{margin-top:0;font-size:17px;color:var(--label)}
   .ta.line{min-height:24px;line-height:1.45;overflow:hidden}
   .btn.line-x{color:var(--gray2);font-size:20px;line-height:1;width:26px;height:26px;border-radius:13px;flex:0 0 auto;margin-top:-1px}
   .btn.line-x:hover{background:var(--fill2)}
   .btn.pill{font-size:15px;font-weight:600;padding:7px 14px;border-radius:999px;background:var(--fill2);color:var(--label)}
   .btn.pill.blue{background:var(--blue);color:#fff}
-  .chip{font-size:13px;line-height:1;padding:5px 10px;border-radius:999px;background:rgba(var(--purple-rgb),.12);color:var(--purple)}
   .toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
     background:rgba(30,30,32,.92);color:#fff;border-radius:999px;padding:12px 16px;font-size:15px;line-height:1.4;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
   .sk{border-radius:6px;background:var(--fill);animation:sk 1.4s ease-in-out infinite}
