@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { extractTags } from "../api/_keywords.js";
+import { extractTags, splitLines, suggestTriesByRules } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
@@ -326,20 +326,39 @@ export default function App(){
   };
   const weekCount=(id,wd=weekDates)=>wd.reduce((n,d)=>n+(isLogged(id,d)?1:0),0);
 
-  /* 레슨런 추가·삭제 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
-  const addLesson=async(text,date)=>{
-    const tmp={id:"tmp"+Date.now(),date,text,tags:extractTags(text)};
-    setLessons(p=>[tmp,...p]);
-    if(lessonMode!=="notion"){setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:"l"+Date.now()}:l));return;}
+  /* 레슨런 추가(여러 줄 한 번에)·삭제 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림
+     items: [{ text, kind: "상황/문제" | "해볼 것" }] */
+  const addLessons=async(items,date)=>{
+    const stamp=Date.now();
+    const tmps=items.map((it,i)=>({id:`tmp${stamp}_${i}`,date,text:it.text,kind:it.kind,tags:extractTags(it.text)}));
+    setLessons(p=>[...tmps,...p]);
+    if(lessonMode!=="notion"){setLessons(p=>p.map(l=>l.id.startsWith(`tmp${stamp}_`)?{...l,id:"l"+l.id.slice(3)}:l));return;}
     try{
-      const r=await api("/api/lessons",{method:"POST",body:JSON.stringify({text,date})});
-      setLessons(p=>p.map(l=>l.id===tmp.id?{...l,id:r.id,tags:Array.isArray(r.tags)?r.tags:l.tags}:l));
+      const r=await api("/api/lessons",{method:"POST",body:JSON.stringify({date,items})});
+      const saved=Array.isArray(r?.items)?r.items:[];
+      setLessons(p=>p.map(l=>{const i=tmps.findIndex(t=>t.id===l.id);if(i<0||!saved[i])return l;
+        return {...l,id:saved[i].id,tags:Array.isArray(saved[i].tags)?saved[i].tags:l.tags};}));
     }catch(e){
-      setLessons(p=>p.filter(l=>l.id!==tmp.id));
+      setLessons(p=>p.filter(l=>!tmps.some(t=>t.id===l.id)));
       setToast(e.message||"레슨런을 저장하지 못했어요.");
       throw e;
     }
   };
+  /* 레슨런 작성 중인 내용 — 날짜별로 기기에 보관 (작성 화면을 닫아도, 앱을 껐다 켜도 남음) */
+  const [drafts,setDrafts]=useState(()=>{try{return JSON.parse(LS.get("wr_lesson_drafts")||"{}")||{};}catch{return {};}});
+  useEffect(()=>{LS.set("wr_lesson_drafts",JSON.stringify(drafts));},[drafts]);
+  const draftOf=(d)=>drafts[d]||{problems:[],tries:[]};
+  const setDraftFor=(d,next)=>setDrafts(p=>{const o={...p};const v=typeof next==="function"?next(draftOf(d)):next;
+    if(!v.problems.some(x=>x.trim())&&!v.tries.some(x=>x.trim()))delete o[d];else o[d]=v;return o;});
+  /* 해볼 것 제안 — 노션에 연결돼 있으면 서버(Claude 또는 규칙), 아니면 기기에서 규칙으로 */
+  const suggestTries=async(problems,tries)=>{
+    if(sync.mode==="notion"){
+      try{const r=await api("/api/suggest",{method:"POST",body:JSON.stringify({problems,tries})});return Array.isArray(r?.suggestions)?r.suggestions:[];}
+      catch(e){}
+    }
+    return suggestTriesByRules(problems,tries);
+  };
+  const [editorOpen,setEditorOpen]=useState(false);
   /* 하루 평점 — 같은 별을 다시 누르면 지움(0) */
   /* 오늘 할 일 추가·수정 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
   const addTask=async(title)=>{
@@ -385,11 +404,12 @@ export default function App(){
     }
     catch(e){ setLessons(p=>p.map(l=>l.id===id?prev:l)); setToast(e.message||"수정하지 못했어요."); }
   };
-  /* 하루 평가 제출 — 별점과 레슨런을 함께 저장하고 카드를 접음 */
-  const submitDay=async(score,text)=>{
-    const date=selDate;
+  /* 하루 평가 제출 — 별점과 작성 중인 레슨런을 함께 저장하고 카드를 접음 */
+  const submitDay=async(score)=>{
+    const date=selDate, d=draftOf(date);
+    const items=[...d.problems.map(t=>({text:t.trim(),kind:"상황/문제"})),...d.tries.map(t=>({text:t.trim(),kind:"해볼 것"}))].filter(it=>it.text);
     if(score!==(ratings[date]||0)) await setRating(date,score);
-    if(text) await addLesson(text,date);   // 실패하면 여기서 멈추고 카드는 열린 채로
+    if(items.length){ await addLessons(items,date); setDraftFor(date,{problems:[],tries:[]}); }   // 실패하면 여기서 멈추고 작성 내용은 그대로
     setRatingToggle(t=>({...t,[date]:false}));
     setToast("제출했어요");
   };
@@ -483,9 +503,9 @@ export default function App(){
   const ratingOpen=ratingToggle[selDate]??evening;
   const ratingCard=(
     <RatingCard key={selDate} score={ratings[selDate]||0} open={ratingOpen}
-      lessonCount={lessons.filter(l=>l.date===selDate).length}
+      lessonCount={lessons.filter(l=>l.date===selDate).length} draft={draftOf(selDate)}
       onToggle={()=>setRatingToggle(t=>({...t,[selDate]:!ratingOpen}))}
-      onSubmit={submitDay}/>
+      onWrite={()=>setEditorOpen(true)} onSubmit={submitDay}/>
   );
 
   /* 선택한 날짜 하루의 진행 */
@@ -636,6 +656,8 @@ export default function App(){
         </SubPage>}
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
         backLabel={subView==="routine"?"루틴":"회고"} onClose={goBack}/>}
+      {editorOpen&&<LessonEditor dateLabel={`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`}
+        draft={draftOf(selDate)} setDraft={(v)=>setDraftFor(selDate,v)} suggest={suggestTries} onClose={()=>setEditorOpen(false)}/>}
       {toast&&<div className="toast fade" role="status">{toast}</div>}
     </div>
   );
@@ -956,19 +978,21 @@ function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
   );
 }
 
-/* ── 하루 평가 ── 접힌 상태: 한 줄 / 펼친 상태: 별 5개 + 레슨런 + 제출하기 */
-function RatingCard({score,open,lessonCount,onToggle,onSubmit}){
+/* ── 하루 평가 ── 접힌 상태: 한 줄 / 펼친 상태: 별 5개 + '레슨런 쓰기' + 제출하기 */
+function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
   const [pick,setPick]=useState(score);
-  const [text,setText]=useState("");
   const [busy,setBusy]=useState(false);
   useEffect(()=>{setPick(score);},[score,open]);
-  const dirty=pick!==score||!!text.trim();
+  const nP=draft.problems.filter(x=>x.trim()).length, nT=draft.tries.filter(x=>x.trim()).length;
+  const dirty=pick!==score||nP+nT>0;
   const submit=async()=>{
     if(!dirty||busy) return;
     setBusy(true);
-    try{ await onSubmit(pick,text.trim()); setText(""); }catch(e){}
+    try{ await onSubmit(pick); }catch(e){}
     finally{ setBusy(false); }
   };
+  const writeSummary=nP+nT>0?[nP&&`상황/문제 ${nP}`,nT&&`해볼 것 ${nT}`].filter(Boolean).join(", ")
+    :lessonCount>0?`${lessonCount}개 저장됨`:"";
   return(
     <section className="group" style={{marginTop:0}}>
       <div className="cells">
@@ -994,19 +1018,144 @@ function RatingCard({score,open,lessonCount,onToggle,onSubmit}){
               </div>
             </div>
           </div>
-          <div className="cell" style={{cursor:"text"}}>
-            <div className="cell-body" style={{padding:"12px 16px 12px 0"}}>
-              <textarea className="ta" rows={3} maxLength={500} value={text} onChange={e=>setText(e.target.value)}
-                onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();submit();}}}
-                placeholder="오늘 배운 점이나 다음에 바꿔 볼 점을 적어 보세요" aria-label="레슨런"/>
+          <button className="btn cell tap" onClick={onWrite}>
+            <span className="lead-ico" style={{background:"var(--purple)"}}><Icon name="bulb" size={16}/></span>
+            <div className="cell-body">
+              <div className="cell-main">
+                <div className="cell-title">레슨런 쓰기</div>
+                {writeSummary&&<div className="cell-sub">{nP+nT>0?`${writeSummary} 작성 중`:writeSummary}</div>}
+              </div>
+              <span className="disclosure"><Chevron size={14}/></span>
             </div>
-          </div>
+          </button>
           <div className="cell" style={{cursor:"default"}}>
             <div className="cell-body" style={{padding:"10px 16px 12px 0"}}>
               <button className="btn filled" style={{width:"100%"}} disabled={!dirty||busy} onClick={submit}>{busy?"제출 중":"제출하기"}</button>
             </div>
           </div>
         </>}
+      </div>
+    </section>
+  );
+}
+
+/* ── 레슨런 작성 화면 ── 상황/문제와 해볼 것을 각각 줄 단위로. 1:1일 필요는 없음.
+   해볼 것으로 이어지지 않은 상황/문제가 있으면 해볼 것을 제안하고, 추가할지는 사용자가 고름 */
+function LessonEditor({dateLabel,draft,setDraft,suggest,onClose}){
+  const [sugs,setSugs]=useState([]);       // [{ problem, text }]
+  const [loading,setLoading]=useState(false);
+  const [dismissed,setDismissed]=useState([]);   // 넘긴 제안 문장
+  useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onClose]);
+  const problems=draft.problems.map(x=>x.trim()).filter(Boolean), tries=draft.tries.map(x=>x.trim()).filter(Boolean);
+  const key=JSON.stringify([problems,tries]);
+  /* 쓰기를 멈추고 1초 지나면 제안을 다시 받음 */
+  useEffect(()=>{
+    if(!problems.length){setSugs([]);return;}
+    let alive=true;
+    const t=setTimeout(async()=>{
+      setLoading(true);
+      try{ const r=await suggest(problems,tries); if(alive) setSugs(r); }
+      finally{ if(alive) setLoading(false); }
+    },1000);
+    return()=>{alive=false;clearTimeout(t);};
+  },[key]);
+  const shown=sugs.filter(s=>!dismissed.includes(s.text)&&!tries.includes(s.text));
+  const accept=(s)=>setDraft(d=>({...d,tries:[...d.tries.filter(x=>x.trim()),s.text]}));
+  const total=problems.length+tries.length;
+  return(
+    <div role="dialog" aria-modal="true" aria-label="레슨런 쓰기" className="sheet push" style={{zIndex:85}}>
+      <header className="navbar scrolled">
+        <div className="navbar-in">
+          <button className="btn glass-ico" onClick={onClose} aria-label="닫기"><Chevron dir="l" size={20}/></button>
+          <span className="nav-title">레슨런</span>
+          <button className="btn txt strong" style={{justifySelf:"end"}} onClick={onClose}>완료</button>
+        </div>
+      </header>
+      <div className="wrap" style={{paddingTop:4}}>
+        <p className="subtitle" style={{margin:"0 4px"}}>{dateLabel}</p>
+
+        <LineList title="상황/문제" color="var(--red)" items={draft.problems} placeholder="있었던 상황이나 문제를 구체적으로"
+          onChange={(v)=>setDraft(d=>({...d,problems:v}))}/>
+        <LineList title="해볼 것" color="var(--blue)" items={draft.tries} placeholder="다음에 바꿔 볼 행동"
+          onChange={(v)=>setDraft(d=>({...d,tries:v}))}/>
+
+        {(shown.length>0||loading)&&
+          <section className="group">
+            <div className="group-head small"><h2>해볼 것 제안</h2>{loading&&<span className="group-side">찾는 중</span>}</div>
+            <div className="cells">
+              {shown.map(s=>(
+                <div key={s.text} className="cell" style={{cursor:"default",alignItems:"flex-start"}}>
+                  <div className="cell-body" style={{alignItems:"flex-start",flexDirection:"column",gap:8}}>
+                    <div className="cell-title">{s.text}</div>
+                    {problems[s.problem]&&<div className="cell-sub" style={{marginTop:-4}}>‘{problems[s.problem]}’에서</div>}
+                    <div style={{display:"flex",gap:8}}>
+                      <button className="btn pill blue" onClick={()=>accept(s)}>추가</button>
+                      <button className="btn pill" onClick={()=>setDismissed(p=>[...p,s.text])}>넘기기</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!shown.length&&loading&&<div className="cell"><div className="cell-body"><span className="cell-sub" style={{margin:0}}>제안을 찾고 있어요</span></div></div>}
+            </div>
+            <p className="group-foot">추가한 제안만 해볼 것에 들어가요.</p>
+          </section>}
+
+        <p className="group-foot" style={{marginTop:24}}>
+          {total?`${total}개 작성 중이에요. 하루 평가하기에서 제출하면 저장돼요.`:"한 줄에 하나씩 적어요. 여러 줄을 붙여 넣으면 줄마다 나눠져요."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* 줄 단위 입력 — 저장된 줄 + 맨 아래 빈 줄 하나를 보여 줌.
+   Enter로 다음 줄, 빈 줄에서 Backspace로 지움, 여러 줄 붙여넣기는 줄마다 나눠 넣음 */
+function LineList({title,color,items,placeholder,onChange}){
+  const rows=[...items,""];
+  const refs=useRef([]);
+  const [focus,setFocus]=useState(null);
+  const store=(next)=>onChange(next[next.length-1]===""?next.slice(0,-1):next);   // 맨 아래 빈 줄은 저장하지 않음
+  useEffect(()=>{
+    if(focus==null) return;
+    const el=refs.current[focus]; if(el){el.focus();const n=el.value.length;el.setSelectionRange(n,n);}
+    setFocus(null);
+  },[focus]);
+  const grow=(el)=>{if(!el)return;el.style.height="auto";el.style.height=el.scrollHeight+"px";};
+  useEffect(()=>{refs.current.forEach(grow);});
+  const count=items.filter(x=>x.trim()).length;
+  return(
+    <section className="group">
+      <div className="group-head small"><h2 style={{color}}>{title}</h2>{count>0&&<span className="group-side num">{count}</span>}</div>
+      <div className="cells">
+        {rows.map((v,i)=>(
+          <div key={i} className="cell" style={{cursor:"text",alignItems:"flex-start"}} onClick={()=>refs.current[i]?.focus()}>
+            <span className="line-dot" style={{background:v.trim()?color:"var(--gray3)"}} aria-hidden="true"/>
+            <div className="cell-body" style={{alignItems:"flex-start"}}>
+              <textarea ref={el=>{refs.current[i]=el;}} className="ta line" rows={1} value={v} maxLength={500}
+                placeholder={i===rows.length-1?(items.length?"한 줄 더":placeholder):""} aria-label={`${title} ${i+1}`}
+                onChange={e=>{const next=[...rows];next[i]=e.target.value.replace(/\n/g," ");store(next);}}
+                onPaste={e=>{
+                  const lines=splitLines(e.clipboardData.getData("text"));
+                  if(lines.length<2) return;
+                  e.preventDefault();
+                  const next=[...rows.slice(0,i),...(v.trim()?[v]:[]),...lines,...rows.slice(i+1)];
+                  store(next); setFocus(next.length-1);
+                }}
+                onKeyDown={e=>{
+                  if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){
+                    e.preventDefault(); if(!v.trim()) return;
+                    const next=[...rows.slice(0,i+1),"",...rows.slice(i+1)];
+                    store(next); setFocus(i+1);
+                  }
+                  if(e.key==="Backspace"&&v===""&&i>0){
+                    e.preventDefault(); store(rows.filter((_,j)=>j!==i)); setFocus(i-1);
+                  }
+                }}/>
+              {i<rows.length-1&&
+                <button className="btn line-x" aria-label="이 줄 지우기" onClick={e=>{e.stopPropagation();store(rows.filter((_,j)=>j!==i));}}>×</button>}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -1085,7 +1234,9 @@ function LessonsList({lessons,today,onEdit,onDelete}){
                 : <div className="cell-main">
                     <div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.text}</div>
                     {(()=>{const tg=l.tags?.length?l.tags:extractTags(l.text);   // 태그 기능 전에 저장된 레슨런은 화면에서만 뽑아 보여줌
-                      return tg.length>0&&<div className="chips">{tg.map(t=><span key={t} className="chip">{t}</span>)}</div>;})()}
+                      return (tg.length>0||l.kind)&&<div className="chips">
+                        {l.kind&&<span className={"chip kind"+(l.kind==="해볼 것"?" try":" prob")}>{l.kind}</span>}
+                        {tg.map(t=><span key={t} className="chip">{t}</span>)}</div>;})()}
                     <div className="cell-sub">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
                   </div>}
               {edit?.id!==l.id&&
@@ -1265,6 +1416,15 @@ const CSS=`
 
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:var(--bg)}
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip.kind{font-weight:600}
+  .chip.kind.prob{background:rgba(255,59,48,.12);color:var(--red)}
+  .chip.kind.try{background:rgba(var(--blue-rgb),.12);color:var(--blue)}
+  .line-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;margin-top:21px}
+  .ta.line{min-height:24px;line-height:1.45;overflow:hidden}
+  .btn.line-x{color:var(--gray2);font-size:20px;line-height:1;width:26px;height:26px;border-radius:13px;flex:0 0 auto;margin-top:-1px}
+  .btn.line-x:hover{background:var(--fill2)}
+  .btn.pill{font-size:15px;font-weight:600;padding:7px 14px;border-radius:999px;background:var(--fill2);color:var(--label)}
+  .btn.pill.blue{background:var(--blue);color:#fff}
   .chip{font-size:13px;line-height:1;padding:5px 10px;border-radius:999px;background:rgba(var(--purple-rgb),.12);color:var(--purple)}
   .toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100;max-width:min(92vw,420px);
     background:rgba(30,30,32,.92);color:#fff;border-radius:999px;padding:12px 16px;font-size:15px;line-height:1.4;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
