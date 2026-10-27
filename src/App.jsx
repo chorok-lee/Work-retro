@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { extractTags, splitLines, suggestTriesByRules } from "../api/_keywords.js";
+import { extractTags, suggestTriesByRules } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
@@ -124,6 +124,9 @@ export default function App(){
   const [tasks,setTasks]=useState({});
   const [tasksErr,setTasksErr]=useState("");
   const [tasksDb,setTasksDb]=useState("");
+  const [priorities,setPriorities]=useState([]);   // 노션 우선순위 선택지 [{ name, color }]
+  /* 회고의 할 일 대시보드 — 최근 4주(이번 주 금요일까지) 마감 과업 */
+  const [rangeTasks,setRangeTasks]=useState(null);   // null = 불러오는 중
   const taskWriteAt=useRef(0);   // 쓰기 이후에 시작되지 않은 조회 결과는 버림(방금 바꾼 값이 되돌아가지 않도록)
   const syncModeRef=useRef("loading");
   const selDateRef=useRef(null);
@@ -244,7 +247,17 @@ export default function App(){
       setTasks(p=>({...p,[date]:Array.isArray(r?.tasks)?r.tasks:[]}));
       setTasksErr("");
       if(r?.tasksDb) setTasksDb(r.tasksDb);
+      if(Array.isArray(r?.priorities)) setPriorities(r.priorities);
     }catch(e){ setTasksErr(e.message||"할 일을 불러오지 못했어요."); }
+  };
+
+  const loadRangeTasks=async(mode=syncModeRef.current)=>{
+    if(mode!=="notion") return;
+    const mon=mondayOf(new Date()), from=toISO(addDays(mon,-21)), to=toISO(addDays(mon,4));
+    try{
+      const r=await api(`/api/tasks?from=${from}&to=${to}`);
+      setRangeTasks(Array.isArray(r?.tasks)?r.tasks:[]);
+    }catch(e){ setRangeTasks(p=>p||[]); }
   };
 
   const lastLoad=useRef(0);
@@ -257,6 +270,7 @@ export default function App(){
       loadLessons();
       loadRatings();
       loadTasks(selDateRef.current,"notion");
+      loadRangeTasks("notion");
     }
     catch(e){
       if(sync.mode==="notion") setStaleWarn("노션에 연결하지 못해 마지막으로 불러온 기록을 보여주고 있어요.");
@@ -327,10 +341,10 @@ export default function App(){
   const weekCount=(id,wd=weekDates)=>wd.reduce((n,d)=>n+(isLogged(id,d)?1:0),0);
 
   /* 레슨런 추가(여러 줄 한 번에)·삭제 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림
-     items: [{ text, kind: "상황/문제" | "해볼 것" }] */
+     items: [{ problem, try }] — 한 단위(상황/문제 + 해볼 것)가 노션 한 행 */
   const addLessons=async(items,date)=>{
     const stamp=Date.now();
-    const tmps=items.map((it,i)=>({id:`tmp${stamp}_${i}`,date,text:it.text,kind:it.kind,tags:extractTags(it.text)}));
+    const tmps=items.map((it,i)=>({id:`tmp${stamp}_${i}`,date,text:it.problem,try:it.try,tags:extractTags(`${it.problem} ${it.try}`)}));
     setLessons(p=>[...tmps,...p]);
     if(lessonMode!=="notion"){setLessons(p=>p.map(l=>l.id.startsWith(`tmp${stamp}_`)?{...l,id:"l"+l.id.slice(3)}:l));return;}
     try{
@@ -347,9 +361,24 @@ export default function App(){
   /* 레슨런 작성 중인 내용 — 날짜별로 기기에 보관 (작성 화면을 닫아도, 앱을 껐다 켜도 남음) */
   const [drafts,setDrafts]=useState(()=>{try{return JSON.parse(LS.get("wr_lesson_drafts")||"{}")||{};}catch{return {};}});
   useEffect(()=>{LS.set("wr_lesson_drafts",JSON.stringify(drafts));},[drafts]);
-  const draftOf=(d)=>drafts[d]||{problems:[],tries:[]};
+  /* { cards:[{ id, p: 상황/문제, t: 해볼 것 }] } — 예전 형태 { problems, tries }는 순서대로 짝지어 옮김 */
+  const draftOf=(d)=>{
+    const v=drafts[d]; if(Array.isArray(v?.cards)) return v;
+    if(!v) return {cards:[]};
+    const ps=v.problems||[], ts=v.tries||[];
+    return {cards:Array.from({length:Math.max(ps.length,ts.length)},(_,i)=>({id:`m${i}`,p:ps[i]||"",t:ts[i]||""}))};
+  };
+  const filledCards=(v)=>v.cards.filter(c=>c.p.trim()||c.t.trim());
   const setDraftFor=(d,next)=>setDrafts(p=>{const o={...p};const v=typeof next==="function"?next(draftOf(d)):next;
-    if(!v.problems.some(x=>x.trim())&&!v.tries.some(x=>x.trim()))delete o[d];else o[d]=v;return o;});
+    if(!filledCards(v).length&&v.cards.length<=1)delete o[d];else o[d]=v;return o;});
+  /* 작성 화면의 저장 — 바로 노션에 저장하고 작성 중인 내용을 비움 */
+  const saveDraft=async(date)=>{
+    const items=filledCards(draftOf(date)).map(c=>({problem:c.p.trim(),try:c.t.trim()}));
+    if(!items.length) return 0;
+    await addLessons(items,date);   // 실패하면 여기서 멈추고 작성 내용은 그대로
+    setDraftFor(date,{cards:[]});
+    return items.length;
+  };
   /* 해볼 것 제안 — 노션에 연결돼 있으면 서버(Claude 또는 규칙), 아니면 기기에서 규칙으로 */
   const suggestTries=async(problems,tries)=>{
     if(sync.mode==="notion"){
@@ -361,13 +390,14 @@ export default function App(){
   const [editorOpen,setEditorOpen]=useState(false);
   /* 하루 평점 — 같은 별을 다시 누르면 지움(0) */
   /* 오늘 할 일 추가·수정 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
-  const addTask=async(title)=>{
-    const date=selDate, tmp={id:"tmp"+Date.now(),title,done:false,priority:"",url:""};
+  const addTask=async(title,priority="")=>{
+    const pc=priorities.find(o=>o.name===priority)?.color||"";
+    const date=selDate, tmp={id:"tmp"+Date.now(),title,done:false,priority,priorityColor:pc,url:""};
     taskWriteAt.current=Date.now();
     setTasks(p=>({...p,[date]:[...(p[date]||[]),tmp]}));
     if(sync.mode!=="notion") return;
     try{
-      const r=await api("/api/tasks",{method:"POST",body:JSON.stringify({title,date})});
+      const r=await api("/api/tasks",{method:"POST",body:JSON.stringify({title,date,...(priority?{priority}:{})})});
       setTasks(p=>({...p,[date]:(p[date]||[]).map(t=>t.id===tmp.id?r.task:t)}));
     }catch(e){
       setTasks(p=>({...p,[date]:(p[date]||[]).filter(t=>t.id!==tmp.id)}));
@@ -394,22 +424,21 @@ export default function App(){
     try{ await api("/api/ratings",{method:"PUT",body:JSON.stringify({date,score})}); }
     catch(e){ apply(prev); setToast(e.message||"평점을 저장하지 못했어요."); }
   };
-  const editLesson=async(id,text)=>{
-    const prev=lessons.find(l=>l.id===id); if(!prev||prev.text===text) return;
-    setLessons(p=>p.map(l=>l.id===id?{...l,text,tags:extractTags(text)}:l));
+  const editLesson=async(id,text,tryText="")=>{
+    const prev=lessons.find(l=>l.id===id); if(!prev||(prev.text===text&&(prev.try||"")===tryText)) return;
+    setLessons(p=>p.map(l=>l.id===id?{...l,text,try:tryText,tags:extractTags(`${text} ${tryText}`)}:l));
     if(lessonMode!=="notion"||String(id).startsWith("tmp")) return;
     try{
-      const r=await api("/api/lessons",{method:"PATCH",body:JSON.stringify({id,text})});
+      const r=await api("/api/lessons",{method:"PATCH",body:JSON.stringify({id,text,try:tryText})});
       if(Array.isArray(r?.tags)) setLessons(p=>p.map(l=>l.id===id?{...l,tags:r.tags}:l));
     }
     catch(e){ setLessons(p=>p.map(l=>l.id===id?prev:l)); setToast(e.message||"수정하지 못했어요."); }
   };
   /* 하루 평가 제출 — 별점과 작성 중인 레슨런을 함께 저장하고 카드를 접음 */
   const submitDay=async(score)=>{
-    const date=selDate, d=draftOf(date);
-    const items=[...d.problems.map(t=>({text:t.trim(),kind:"상황/문제"})),...d.tries.map(t=>({text:t.trim(),kind:"해볼 것"}))].filter(it=>it.text);
+    const date=selDate;
     if(score!==(ratings[date]||0)) await setRating(date,score);
-    if(items.length){ await addLessons(items,date); setDraftFor(date,{problems:[],tries:[]}); }   // 실패하면 여기서 멈추고 작성 내용은 그대로
+    await saveDraft(date);   // 작성 화면에서 저장하지 않고 남겨 둔 레슨런도 함께
     setRatingToggle(t=>({...t,[date]:false}));
     setToast("제출했어요");
   };
@@ -547,6 +576,18 @@ export default function App(){
   const latestLesson=[...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)[0];
   const shortDate=(iso)=>iso===today?"오늘":`${fromISO(iso).getMonth()+1}월 ${fromISO(iso).getDate()}일`;
 
+  /* 할 일 대시보드 — 4주치 과업에, 오늘 탭에서 불러온(더 최신인) 날짜별 목록을 덮어씀 */
+  const rangeFrom=toISO(addDays(curMon,-21)), rangeTo=toISO(addDays(curMon,4));
+  const allTasks=(()=>{
+    const fresh=Object.entries(tasks).filter(([d])=>d>=rangeFrom&&d<=rangeTo);
+    const freshDates=new Set(fresh.map(([d])=>d));
+    return [...(rangeTasks||[]).filter(t=>!freshDates.has(t.date)),...fresh.flatMap(([d,ts])=>ts.map(t=>({...t,date:d})))]
+      .filter(t=>t.priority!=="폐기");
+  })();
+  const tasksLoading=isNotion&&rangeTasks==null;
+  const weekTaskList=allTasks.filter(t=>t.date>=toISO(curMon)&&t.date<=rangeTo);
+  const wkStat=taskStats(weekTaskList);
+
   return (
     <div className="app">
       <style>{CSS}</style>
@@ -571,6 +612,8 @@ export default function App(){
 
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
             <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
+              loading={isNotion&&tasks[selDate]===undefined&&!tasksErr}
+              priorities={isNotion?priorities:PRIOS.map((name,i)=>({name,color:["red","orange","blue","gray"][i]}))}
               dbUrl={isNotion?dbLink(tasksDb):""}
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}/>
 
@@ -615,11 +658,21 @@ export default function App(){
           <div className="fade summary">
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)}/>
-            <SummaryCard icon="star" color="var(--orange)" title="하루 평점" meta="이번 주" onOpen={()=>openSub("rating")}
+            <SummaryCard icon="flag" color="var(--red)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
+              {...(wkStat.core.total
+                ? {value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"핵심",
+                   foot:wkStat.core.done===wkStat.core.total?"핵심 과업을 모두 끝냈어요":`핵심 과업이 ${wkStat.core.total-wkStat.core.done}개 남았어요`}
+                : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료",foot:"이번 주 마감인 핵심 과업은 없어요"}
+                : {empty:"할 일이 없어요",foot:"이번 주 마감인 과업이 없어요"})}
+              done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
+              bars={thisWeek.map(d=>{const ts=weekTaskList.filter(t=>t.date===d);return ts.length?ts.filter(t=>t.done).length:d>today?null:0;})}
+              max={Math.max(1,...thisWeek.map(d=>weekTaskList.filter(t=>t.date===d).length))}/>
+            <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" bars={weekRatings} max={5}/>
             <SummaryCard icon="bulb" color="var(--purple)" title="레슨런" meta={latestLesson?shortDate(latestLesson.date):""} onOpen={()=>openSub("lessons")}
-              empty={latestLesson?null:"아직 없어요"} quote={latestLesson?.text}
-              foot={thisWeekLessons.length?`이번 주에 ${thisWeekLessons.length}개 남겼어요`:"이번 주에는 아직 없어요"}/>
+              empty={latestLesson?null:"아직 없어요"} quote={latestLesson?.text||latestLesson?.try}
+              foot={thisWeekLessons.length?`이번 주에 ${thisWeekLessons.length}개 남겼어요`:"이번 주에는 아직 없어요"}
+              loading={lessonMode==="loading"}/>
           </div>
         )}
       </main>
@@ -644,20 +697,27 @@ export default function App(){
               </div>
             </section>}
         </SubPage>}
+      {subView==="tasks"&&
+        <SubPage title="할 일" onBack={goBack}>
+          <TaskDashboard tasks={allTasks} loading={tasksLoading} today={today} curMon={curMon}/>
+        </SubPage>}
       {subView==="rating"&&
         <SubPage title="하루 평점" onBack={goBack}>
-          <RatingTrend ratings={ratings} today={today}/>
-          <RatingHistory ratings={ratings} today={today}/>
+          {ratingMode==="loading"?<SkeletonList card rows={4}/>:<>
+            <RatingTrend ratings={ratings} today={today}/>
+            <RatingHistory ratings={ratings} today={today}/></>}
         </SubPage>}
       {subView==="lessons"&&
         <SubPage title="레슨런" onBack={goBack}>
           {lessonNote&&<div className="banner">{lessonNote}</div>}
-          <LessonsList lessons={lessons} today={today} onEdit={editLesson} onDelete={delLesson}/>
+          {lessonMode==="loading"?<SkeletonList rows={4} tall/>
+            :<LessonsList lessons={lessons} today={today} onEdit={editLesson} onDelete={delLesson}/>}
         </SubPage>}
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
         backLabel={subView==="routine"?"루틴":"회고"} onClose={goBack}/>}
       {editorOpen&&<LessonEditor dateLabel={`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`}
-        draft={draftOf(selDate)} setDraft={(v)=>setDraftFor(selDate,v)} suggest={suggestTries} onClose={()=>setEditorOpen(false)}/>}
+        draft={draftOf(selDate)} setDraft={(v)=>setDraftFor(selDate,v)} suggest={suggestTries} onClose={()=>setEditorOpen(false)}
+        onSave={async()=>{const date=selDate;const n=await saveDraft(date);setEditorOpen(false);if(n)setToast("레슨런을 저장했어요");}}/>}
       {toast&&<div className="toast fade" role="status">{toast}</div>}
     </div>
   );
@@ -681,7 +741,16 @@ function SubPage({title,onBack,children}){
 }
 
 /* ── 회고 요약 카드 (건강 앱 요약처럼) — 제목·시점 | 큰 값 + 작은 막대 ── */
-function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,quote,foot}){
+function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,quote,foot,loading,done}){
+  if(loading) return(
+    <div className="btn sum-card" aria-busy="true" aria-label={`${title} 불러오는 중`}>
+      <div className="sum-head"><span className="sum-title" style={{color}}><Icon name={icon} size={19}/>{title}</span></div>
+      <div className="sum-body">
+        <div style={{flex:1}}><div className="sk" style={{height:32,width:96}}/><div className="sk" style={{height:14,width:150,marginTop:10}}/></div>
+        <div className="sk" style={{height:44,width:96,borderRadius:8}}/>
+      </div>
+    </div>
+  );
   return(
     <button className="btn sum-card" onClick={onOpen} aria-label={`${title} 자세히 보기`}>
       <div className="sum-head">
@@ -692,7 +761,8 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,quo
         <div style={{minWidth:0,flex:1}}>
           {quote&&<p className="sum-quote">{quote}</p>}
           {value!=null
-            ? <div className="sum-value"><span className="num">{value}</span>{unit&&<small>{unit}</small>}</div>
+            ? <div className="sum-value"><span className="num">{value}</span>{unit&&<small>{unit}</small>}
+                {done&&<span className="sum-ok" aria-label="모두 달성"><svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7.3 5.8 10 11 4.2" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg></span>}</div>
             : empty&&<div className="sum-empty">{empty}</div>}
           {foot&&<div className="sum-foot">{foot}</div>}
         </div>
@@ -704,6 +774,113 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,quo
       </div>
     </button>
   );
+}
+
+/* ── 뼈대(스켈레톤) — 불러오는 동안 실제 줄과 같은 높이로 자리를 잡아 둠 (내용이 들어와도 화면이 밀리지 않게) ── */
+function SkeletonCell({check,w=60,tall}){
+  return(
+    <div className="cell" aria-hidden="true">
+      {check&&<span className="sk" style={{width:22,height:22,borderRadius:7,flex:"0 0 auto"}}/>}
+      <div className="cell-body" style={{padding:tall?"14px 16px 14px 0":undefined}}>
+        <div style={{flex:1}}>
+          <div className="sk" style={{height:15,width:`${w}%`}}/>
+          {tall&&<div className="sk" style={{height:13,width:`${Math.max(30,w-25)}%`,marginTop:9}}/>}
+        </div>
+      </div>
+    </div>
+  );
+}
+function SkeletonList({rows=3,tall,card}){
+  return(
+    <div role="status" aria-label="불러오는 중">
+      {card&&<div className="card"><div className="sk" style={{height:15,width:90}}/><div className="sk" style={{height:30,width:70,marginTop:14}}/>
+        <div className="sk" style={{height:72,marginTop:14,borderRadius:8}}/></div>}
+      <section className="group">
+        <div className="group-head small"><div className="sk" style={{height:13,width:70}}/></div>
+        <div className="cells">{Array.from({length:rows},(_,i)=><SkeletonCell key={i} tall={tall} w={[72,56,80,64][i%4]}/>)}</div>
+      </section>
+    </div>
+  );
+}
+
+/* ── 할 일 대시보드 ── 이번 주 핵심 과업을 다 끝냈는지, 우선순위별 몇 개 중 몇 개, 남은 핵심·높음, 최근 4주 */
+const PRIOS=["핵심","높음","보통","낮음"];
+function taskStats(list){
+  const by=(name)=>{const ts=list.filter(t=>(PRIOS.includes(t.priority)?t.priority:"")===name);
+    return {name,total:ts.length,done:ts.filter(t=>t.done).length,color:ts.find(t=>t.priorityColor)?.priorityColor||"default"};};
+  const groups=[...PRIOS,""].map(by).filter(g=>g.total);
+  return {total:list.length,done:list.filter(t=>t.done).length,groups,core:by("핵심")};
+}
+function TaskDashboard({tasks,loading,today,curMon}){
+  if(loading) return <SkeletonList card rows={4}/>;
+  const monISO=toISO(curMon), friISO=toISO(addDays(curMon,4));
+  const week=tasks.filter(t=>t.date>=monISO&&t.date<=friISO);
+  const st=taskStats(week);
+  const allDone=st.core.total>0&&st.core.done===st.core.total;
+  const left=week.filter(t=>!t.done&&(t.priority==="핵심"||t.priority==="높음"))
+    .sort((a,b)=>(a.priority===b.priority?0:a.priority==="핵심"?-1:1)||(a.date<b.date?-1:a.date>b.date?1:0));
+  const weeks=[3,2,1,0].map(i=>{const m=addDays(curMon,-7*i),a=toISO(m),b=toISO(addDays(m,4));
+    return {a,cur:i===0,st:taskStats(tasks.filter(t=>t.date>=a&&t.date<=b))};}).reverse();
+  const tagCls=(c)=>"tag c-"+(NOTION_COLORS.includes(c)?c:"default");
+  const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
+  return(<>
+    <div className="card">
+      <div className="card-head" style={{color:"var(--red)"}}><Icon name="flag" size={16}/>이번 주 핵심 과업</div>
+      {st.core.total
+        ? <>
+            <div className="value"><span className="num">{allDone?"모두 달성":`${st.core.done}/${st.core.total}`}</span>
+              {!allDone&&<small>완료</small>}</div>
+            <div className="seg" aria-hidden="true">{Array.from({length:st.core.total},(_,i)=><span key={i} className={i<st.core.done?"on":undefined}/>)}</div>
+            <p className="card-note">{allDone?`핵심 과업 ${st.core.total}개를 모두 끝냈어요.`:`핵심 과업 ${st.core.total}개 중 ${st.core.total-st.core.done}개가 남았어요.`}</p>
+          </>
+        : <p className="card-note" style={{marginTop:10}}>이번 주 마감인 핵심 과업이 없어요.</p>}
+    </div>
+
+    <section className="group">
+      <div className="group-head small"><h2>우선순위별</h2>{st.total>0&&<span className="group-side num">{st.done}/{st.total}</span>}</div>
+      {st.groups.length
+        ? <div className="cells">
+            {st.groups.map(g=>(
+              <div key={g.name||"none"} className="cell"><div className="cell-body">
+                {g.name?<span className={tagCls(g.color)}>{g.name}</span>:<span className="cell-sub" style={{margin:0}}>우선순위 없음</span>}
+                <div className="pbar" aria-hidden="true"><span style={{width:`${g.done/g.total*100}%`}} className={g.done===g.total?"full":undefined}/></div>
+                <span className={"cell-value num"+(g.done===g.total?" met":"")} aria-label={`${g.name||"우선순위 없음"} ${g.total}개 중 ${g.done}개 완료`}>{g.done}/{g.total}</span>
+              </div></div>))}
+          </div>
+        : <p className="group-foot">이번 주 마감인 과업이 없어요.</p>}
+    </section>
+
+    {left.length>0&&
+      <section className="group">
+        <div className="group-head small"><h2>남은 핵심·높음 과업</h2><span className="group-side num">{left.length}개</span></div>
+        <div className="cells">
+          {left.map(t=>(
+            <a key={t.id} className="cell tap" href={t.url||undefined} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none"}}>
+              <div className="cell-body">
+                <div className="cell-main">
+                  <div className="cell-title">{t.title}</div>
+                  <div className="cell-sub" style={t.date<today?{color:"var(--red)"}:undefined}>{dLabel(t.date)}{t.date<today?" · 지남":""}</div>
+                </div>
+                <span className={tagCls(t.priorityColor)}>{t.priority}</span>
+              </div>
+            </a>))}
+        </div>
+      </section>}
+
+    <section className="group">
+      <div className="group-head small"><h2>최근 4주</h2></div>
+      <div className="cells">
+        {weeks.map(w=>{const wk=weekOfMonth(w.a),c=w.st.core,ok=c.total>0&&c.done===c.total;return(
+          <div key={w.a} className="cell"><div className="cell-body">
+            <div className="cell-main">
+              <div className="cell-title">{w.cur?"이번 주":`${wk.m}월 ${wk.w}주차`}</div>
+              <div className="cell-sub">{w.st.total?`전체 ${w.st.total}개 중 ${w.st.done}개 완료`:"마감인 과업 없음"}</div>
+            </div>
+            {c.total>0&&<span className={"cell-value num"+(ok?" met":"")}>핵심 {c.done}/{c.total}</span>}
+          </div></div>);})}
+      </div>
+    </section>
+  </>);
 }
 
 /* 하루 평점 목록 — 최근 평가한 날 */
@@ -731,6 +908,7 @@ function Icon({name,size=22}){
   if(name==="bulb") return <svg {...p}><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg>;
   if(name==="chart") return <svg {...p}><path d="M5 20V12M10 20V5M15 20v-9M20 20V8"/></svg>;
   if(name==="flame") return <svg {...p}><path d="M12 21c3.9 0 6.5-2.7 6.5-6.4 0-3.3-2.3-5.6-3.8-7.6-.4 1.9-1.5 3-2.7 3.5.2-2.8-1-5.4-3.4-7.5-.3 3.5-4.1 6.2-4.1 11.6C4.5 18.3 7.6 21 12 21z"/></svg>;
+  if(name==="flag") return <svg {...p}><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>;
   if(name==="star") return <svg {...p} fill="currentColor" stroke="none"><path d={STAR}/></svg>;
   return null;
 }
@@ -924,10 +1102,12 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename}){
   const [draft,setDraft]=useState("");
+  const [prio,setPrio]=useState("");      // 새 할 일의 우선순위 (노션 선택지)
+  const prioOpt=priorities.find(o=>o.name===prio);
   const [edit,setEdit]=useState(null);   // { id, text }
-  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t);setDraft("");};
+  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,prioOpt?prio:"");setDraft("");setPrio("");};
   const commit=()=>{
     if(!edit) return;
     const t=tasks.find(x=>x.id===edit.id), v=edit.text.trim();
@@ -947,7 +1127,8 @@ function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
       </div>
       {err&&<div className="banner" style={{margin:"0 0 8px"}}>{err}</div>}
       <div className="cells">
-        {tasks.map(t=>(
+        {loading&&[0,1,2].map(i=><SkeletonCell key={i} check w={[62,48,70][i]}/>)}
+        {!loading&&tasks.map(t=>(
           <div key={t.id} className="cell">
             <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="hit"
               onClick={()=>onToggle(t)}
@@ -972,8 +1153,16 @@ function TasksSection({title,tasks,err,dbUrl,onAdd,onToggle,onRename}){
             {draft.trim()&&<button className="btn txt strong" onClick={add}>추가</button>}
           </div>
         </div>
+        {/* 쓰기 시작하면 우선순위 고르는 줄이 나옴 (노션 선택지·색 그대로, 다시 누르면 해제) */}
+        {draft.trim()&&priorities.length>0&&
+          <div className="prio-row" role="radiogroup" aria-label="새 할 일 우선순위">
+            {priorities.map(o=>(
+              <button key={o.name} role="radio" aria-checked={prio===o.name}
+                className={"btn tag c-"+(NOTION_COLORS.includes(o.color)?o.color:"default")+(prio===o.name?" sel":"")}
+                onClick={()=>setPrio(p=>p===o.name?"":o.name)}>{o.name}</button>))}
+          </div>}
       </div>
-      {tasks.length===0&&!err&&<p className="group-foot">이날 마감인 할 일이 없어요. 노션 과업 목록과 함께 맞춰져요.</p>}
+      {!loading&&tasks.length===0&&!err&&<p className="group-foot">이날 마감인 할 일이 없어요. 노션 과업 목록과 함께 맞춰져요.</p>}
     </section>
   );
 }
@@ -983,16 +1172,15 @@ function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
   const [pick,setPick]=useState(score);
   const [busy,setBusy]=useState(false);
   useEffect(()=>{setPick(score);},[score,open]);
-  const nP=draft.problems.filter(x=>x.trim()).length, nT=draft.tries.filter(x=>x.trim()).length;
-  const dirty=pick!==score||nP+nT>0;
+  const nD=draft.cards.filter(c=>c.p.trim()||c.t.trim()).length;
+  const dirty=pick!==score||nD>0;
   const submit=async()=>{
     if(!dirty||busy) return;
     setBusy(true);
     try{ await onSubmit(pick); }catch(e){}
     finally{ setBusy(false); }
   };
-  const writeSummary=nP+nT>0?[nP&&`상황/문제 ${nP}`,nT&&`해볼 것 ${nT}`].filter(Boolean).join(", ")
-    :lessonCount>0?`${lessonCount}개 저장됨`:"";
+  const writeSummary=[lessonCount>0&&`${lessonCount}개 저장됨`,nD>0&&`${nD}개 작성 중`].filter(Boolean).join(" · ");
   return(
     <section className="group" style={{marginTop:0}}>
       <div className="cells">
@@ -1023,7 +1211,7 @@ function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
             <div className="cell-body">
               <div className="cell-main">
                 <div className="cell-title">레슨런 쓰기</div>
-                {writeSummary&&<div className="cell-sub">{nP+nT>0?`${writeSummary} 작성 중`:writeSummary}</div>}
+                {writeSummary&&<div className="cell-sub">{writeSummary}</div>}
               </div>
               <span className="disclosure"><Chevron size={14}/></span>
             </div>
@@ -1039,125 +1227,87 @@ function RatingCard({score,open,lessonCount,draft,onToggle,onWrite,onSubmit}){
   );
 }
 
-/* ── 레슨런 작성 화면 ── 상황/문제와 해볼 것을 각각 줄 단위로. 1:1일 필요는 없음.
-   해볼 것으로 이어지지 않은 상황/문제가 있으면 해볼 것을 제안하고, 추가할지는 사용자가 고름 */
-function LessonEditor({dateLabel,draft,setDraft,suggest,onClose}){
-  const [sugs,setSugs]=useState([]);       // [{ problem, text }]
-  const [loading,setLoading]=useState(false);
-  const [dismissed,setDismissed]=useState([]);   // 넘긴 제안 문장
+/* ── 레슨런 작성 화면 ── 카드 한 장 = 상황/문제 + 해볼 것 한 단위.
+   상황/문제를 다 쓰고(칸을 벗어나면) 해볼 것이 비어 있으면, 해볼 것 칸 안에 제안을 한 번 띄움.
+   제안은 넣기/닫기를 누를 때까지 그대로 둠(입력 중에 생겼다 없어지지 않게). 저장은 이 화면에서 바로 */
+let cardSeq=0;
+const newCard=()=>({id:`c${Date.now().toString(36)}${cardSeq++}`,p:"",t:""});
+function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
+  const [blank]=useState(newCard);
+  const cards=draft.cards.length?draft.cards:[blank];
+  const [sugs,setSugs]=useState({});   // { cardId: { for: 상황/문제, text } }
+  const [closed,setClosed]=useState({}); // { cardId: 닫은 제안 문장 }
+  const [busy,setBusy]=useState(false);
+  const asked=useRef({});               // { cardId: 마지막으로 제안을 받은 상황/문제 }
+  const refs=useRef({});
+  const [focusId,setFocusId]=useState(null);
   useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onClose]);
-  const problems=draft.problems.map(x=>x.trim()).filter(Boolean), tries=draft.tries.map(x=>x.trim()).filter(Boolean);
-  const key=JSON.stringify([problems,tries]);
-  /* 쓰기를 멈추고 1초 지나면 제안을 다시 받음 */
-  useEffect(()=>{
-    if(!problems.length){setSugs([]);return;}
-    let alive=true;
-    const t=setTimeout(async()=>{
-      setLoading(true);
-      try{ const r=await suggest(problems,tries); if(alive) setSugs(r); }
-      finally{ if(alive) setLoading(false); }
-    },1000);
-    return()=>{alive=false;clearTimeout(t);};
-  },[key]);
-  const shown=sugs.filter(s=>!dismissed.includes(s.text)&&!tries.includes(s.text));
-  const accept=(s)=>setDraft(d=>({...d,tries:[...d.tries.filter(x=>x.trim()),s.text]}));
-  const total=problems.length+tries.length;
+  useEffect(()=>{if(!focusId)return;const el=refs.current[focusId];if(el){el.focus();el.scrollIntoView?.({block:"center",behavior:"smooth"});}setFocusId(null);},[focusId]);
+  const grow=(el)=>{if(!el)return;el.style.height="auto";el.style.height=el.scrollHeight+"px";};
+  useEffect(()=>{Object.values(refs.current).forEach(grow);});
+  const put=(next)=>setDraft({cards:next});
+  const patch=(id,v)=>put(cards.map(c=>c.id===id?{...c,...v}:c));
+  const add=()=>{const c=newCard();put([...cards,c]);setFocusId(c.id+"p");};
+  const remove=(id)=>put(cards.filter(c=>c.id!==id));
+  const ask=async(c)=>{
+    const p=c.p.trim();
+    if(!p||c.t.trim()||asked.current[c.id]===p) return;
+    asked.current[c.id]=p;
+    const r=await suggest([p],[]).catch(()=>[]);
+    if(asked.current[c.id]!==p) return;
+    if(r[0]?.text) setSugs(m=>({...m,[c.id]:{for:p,text:r[0].text}}));   // 새 제안이 없으면 이전 제안을 그대로 둠
+  };
+  const filled=cards.filter(c=>c.p.trim()||c.t.trim()).length;
+  const save=async()=>{if(!filled||busy)return;setBusy(true);try{await onSave();}catch(e){}finally{setBusy(false);}};
   return(
     <div role="dialog" aria-modal="true" aria-label="레슨런 쓰기" className="sheet push" style={{zIndex:85}}>
       <header className="navbar scrolled">
         <div className="navbar-in">
           <button className="btn glass-ico" onClick={onClose} aria-label="닫기"><Chevron dir="l" size={20}/></button>
           <span className="nav-title">레슨런</span>
-          <button className="btn txt strong" style={{justifySelf:"end"}} onClick={onClose}>완료</button>
+          <button className="btn txt strong" style={{justifySelf:"end"}} disabled={!filled||busy} onClick={save}>저장</button>
         </div>
       </header>
       <div className="wrap" style={{paddingTop:4}}>
-        <p className="subtitle" style={{margin:"0 4px"}}>{dateLabel}</p>
-
-        <LineList title="상황/문제" color="var(--red)" items={draft.problems} placeholder="있었던 상황이나 문제를 구체적으로"
-          onChange={(v)=>setDraft(d=>({...d,problems:v}))}/>
-        <LineList title="해볼 것" color="var(--blue)" items={draft.tries} placeholder="다음에 바꿔 볼 행동"
-          onChange={(v)=>setDraft(d=>({...d,tries:v}))}/>
-
-        {(shown.length>0||loading)&&
-          <section className="group">
-            <div className="group-head small"><h2>해볼 것 제안</h2>{loading&&<span className="group-side">찾는 중</span>}</div>
-            <div className="cells">
-              {shown.map(s=>(
-                <div key={s.text} className="cell" style={{cursor:"default",alignItems:"flex-start"}}>
-                  <div className="cell-body" style={{alignItems:"flex-start",flexDirection:"column",gap:8}}>
-                    <div className="cell-title">{s.text}</div>
-                    {problems[s.problem]&&<div className="cell-sub" style={{marginTop:-4}}>‘{problems[s.problem]}’에서</div>}
-                    <div style={{display:"flex",gap:8}}>
-                      <button className="btn pill blue" onClick={()=>accept(s)}>추가</button>
-                      <button className="btn pill" onClick={()=>setDismissed(p=>[...p,s.text])}>넘기기</button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {!shown.length&&loading&&<div className="cell"><div className="cell-body"><span className="cell-sub" style={{margin:0}}>제안을 찾고 있어요</span></div></div>}
+        <p className="subtitle" style={{margin:"0 4px 4px"}}>{dateLabel}</p>
+        {cards.map((c,i)=>{
+          const sg=sugs[c.id], showSug=sg&&!c.t.trim()&&closed[c.id]!==sg.text;
+          return(
+          <section key={c.id} className="lcard" aria-label={`레슨런 ${i+1}`}>
+            <div className="lfield">
+              <div className="lfield-head">
+                <span className="lfield-label" style={{color:"var(--red)"}}>상황/문제</span>
+                {(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
+              </div>
+              <textarea ref={el=>{refs.current[c.id+"p"]=el;}} className="ta line" rows={1} value={c.p} maxLength={500}
+                placeholder="있었던 상황이나 문제를 구체적으로" aria-label={`상황/문제 ${i+1}`}
+                onChange={e=>patch(c.id,{p:e.target.value})} onBlur={()=>ask(c)}
+                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();setFocusId(c.id+"t");}}}/>
             </div>
-            <p className="group-foot">추가한 제안만 해볼 것에 들어가요.</p>
-          </section>}
-
-        <p className="group-foot" style={{marginTop:24}}>
-          {total?`${total}개 작성 중이에요. 하루 평가하기에서 제출하면 저장돼요.`:"한 줄에 하나씩 적어요. 여러 줄을 붙여 넣으면 줄마다 나눠져요."}
-        </p>
+            <div className="lfield">
+              <div className="lfield-head"><span className="lfield-label" style={{color:"var(--blue)"}}>해볼 것</span></div>
+              <textarea ref={el=>{refs.current[c.id+"t"]=el;}} className="ta line" rows={1} value={c.t} maxLength={500}
+                placeholder={showSug?"직접 쓰거나 아래 제안을 넣어요":"다음에 바꿔 볼 행동"} aria-label={`해볼 것 ${i+1}`}
+                onChange={e=>patch(c.id,{t:e.target.value})}
+                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();
+                  if(i===cards.length-1){if(c.p.trim()||c.t.trim())add();}else setFocusId(cards[i+1].id+"p");}}}/>
+              {showSug&&
+                <div className="lsug" role="group" aria-label="해볼 것 제안">
+                  <div className="lsug-label">제안</div>
+                  <div className="lsug-text">{sg.text}</div>
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <button className="btn pill blue" onClick={()=>patch(c.id,{t:sg.text})}>넣기</button>
+                    <button className="btn pill" onClick={()=>setClosed(m=>({...m,[c.id]:sg.text}))}>닫기</button>
+                  </div>
+                </div>}
+            </div>
+          </section>);})}
+        <button className="btn ladd" onClick={add}><span aria-hidden="true">+</span> 레슨런 추가</button>
+        <p className="group-foot" style={{marginTop:10}}>카드 한 장에 상황/문제와 해볼 것을 하나씩 적어요. 한쪽만 적어도 괜찮아요.</p>
+        <button className="btn filled" style={{width:"100%",marginTop:22}} disabled={!filled||busy} onClick={save}>
+          {busy?"저장 중":filled?`${filled}개 저장하기`:"저장하기"}</button>
       </div>
     </div>
-  );
-}
-
-/* 줄 단위 입력 — 저장된 줄 + 맨 아래 빈 줄 하나를 보여 줌.
-   Enter로 다음 줄, 빈 줄에서 Backspace로 지움, 여러 줄 붙여넣기는 줄마다 나눠 넣음 */
-function LineList({title,color,items,placeholder,onChange}){
-  const rows=[...items,""];
-  const refs=useRef([]);
-  const [focus,setFocus]=useState(null);
-  const store=(next)=>onChange(next[next.length-1]===""?next.slice(0,-1):next);   // 맨 아래 빈 줄은 저장하지 않음
-  useEffect(()=>{
-    if(focus==null) return;
-    const el=refs.current[focus]; if(el){el.focus();const n=el.value.length;el.setSelectionRange(n,n);}
-    setFocus(null);
-  },[focus]);
-  const grow=(el)=>{if(!el)return;el.style.height="auto";el.style.height=el.scrollHeight+"px";};
-  useEffect(()=>{refs.current.forEach(grow);});
-  const count=items.filter(x=>x.trim()).length;
-  return(
-    <section className="group">
-      <div className="group-head small"><h2 style={{color}}>{title}</h2>{count>0&&<span className="group-side num">{count}</span>}</div>
-      <div className="cells">
-        {rows.map((v,i)=>(
-          <div key={i} className="cell" style={{cursor:"text",alignItems:"flex-start"}} onClick={()=>refs.current[i]?.focus()}>
-            <span className="line-dot" style={{background:v.trim()?color:"var(--gray3)"}} aria-hidden="true"/>
-            <div className="cell-body" style={{alignItems:"flex-start"}}>
-              <textarea ref={el=>{refs.current[i]=el;}} className="ta line" rows={1} value={v} maxLength={500}
-                placeholder={i===rows.length-1?(items.length?"한 줄 더":placeholder):""} aria-label={`${title} ${i+1}`}
-                onChange={e=>{const next=[...rows];next[i]=e.target.value.replace(/\n/g," ");store(next);}}
-                onPaste={e=>{
-                  const lines=splitLines(e.clipboardData.getData("text"));
-                  if(lines.length<2) return;
-                  e.preventDefault();
-                  const next=[...rows.slice(0,i),...(v.trim()?[v]:[]),...lines,...rows.slice(i+1)];
-                  store(next); setFocus(next.length-1);
-                }}
-                onKeyDown={e=>{
-                  if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){
-                    e.preventDefault(); if(!v.trim()) return;
-                    const next=[...rows.slice(0,i+1),"",...rows.slice(i+1)];
-                    store(next); setFocus(i+1);
-                  }
-                  if(e.key==="Backspace"&&v===""&&i>0){
-                    e.preventDefault(); store(rows.filter((_,j)=>j!==i)); setFocus(i-1);
-                  }
-                }}/>
-              {i<rows.length-1&&
-                <button className="btn line-x" aria-label="이 줄 지우기" onClick={e=>{e.stopPropagation();store(rows.filter((_,j)=>j!==i));}}>×</button>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 const STAR="M12 2.8l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.6l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z";
@@ -1206,7 +1356,7 @@ function LessonsList({lessons,today,onEdit,onDelete}){
     document.addEventListener("click",close); document.addEventListener("keydown",esc);
     return()=>{document.removeEventListener("click",close);document.removeEventListener("keydown",esc);};
   },[menu]);
-  const save=()=>{const v=edit.text.trim();if(v)onEdit(edit.id,v);setEdit(null);};
+  const save=()=>{const v=edit.text.trim(),t=edit.try.trim();if(v||t)onEdit(edit.id,v,t);setEdit(null);};
   const groups=[];
   for(const l of [...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)){
     const k=toISO(mondayOf(fromISO(l.date)));
@@ -1223,20 +1373,24 @@ function LessonsList({lessons,today,onEdit,onDelete}){
             <div className="cell-body" style={{alignItems:"flex-start"}}>
               {edit?.id===l.id
                 ? <div className="cell-main">
-                    <textarea className="ta" rows={3} autoFocus maxLength={500} value={edit.text} aria-label="레슨런 수정"
-                      onChange={e=>setEdit({id:l.id,text:e.target.value})}
-                      onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}if(e.key==="Escape")setEdit(null);}}/>
+                    {[["text","상황/문제","var(--red)"],["try","해볼 것","var(--blue)"]].map(([k,lb,col],j)=>(
+                      <div key={k} style={{marginTop:j?10:0}}>
+                        <div className="lfield-label" style={{color:col}}>{lb}</div>
+                        <textarea className="ta" rows={2} autoFocus={!j} maxLength={1000} value={edit[k]} aria-label={`${lb} 수정`}
+                          onChange={e=>setEdit(x=>({...x,[k]:e.target.value}))}
+                          onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();save();}if(e.key==="Escape")setEdit(null);}}/>
+                      </div>))}
                     <div style={{display:"flex",justifyContent:"flex-end",gap:4,marginTop:4}}>
                       <button className="btn txt" onClick={()=>setEdit(null)}>취소</button>
-                      <button className="btn txt strong" disabled={!edit.text.trim()} onClick={save}>저장</button>
+                      <button className="btn txt strong" disabled={!edit.text.trim()&&!edit.try.trim()} onClick={save}>저장</button>
                     </div>
                   </div>
                 : <div className="cell-main">
-                    <div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.text}</div>
-                    {(()=>{const tg=l.tags?.length?l.tags:extractTags(l.text);   // 태그 기능 전에 저장된 레슨런은 화면에서만 뽑아 보여줌
-                      return (tg.length>0||l.kind)&&<div className="chips">
-                        {l.kind&&<span className={"chip kind"+(l.kind==="해볼 것"?" try":" prob")}>{l.kind}</span>}
-                        {tg.map(t=><span key={t} className="chip">{t}</span>)}</div>;})()}
+                    {l.text&&<div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.text}</div>}
+                    {l.try&&<div className="ltry"><span className="lfield-label" style={{color:"var(--blue)"}}>해볼 것</span>
+                      <div style={{whiteSpace:"pre-wrap",lineHeight:1.45}}>{l.try}</div></div>}
+                    {(()=>{const tg=l.tags?.length?l.tags:extractTags(`${l.text} ${l.try||""}`);   // 태그 기능 전에 저장된 레슨런은 화면에서만 뽑아 보여줌
+                      return tg.length>0&&<div className="chips">{tg.map(t=><span key={t} className="chip">{t}</span>)}</div>;})()}
                     <div className="cell-sub">{d.getMonth()+1}월 {d.getDate()}일 {wdOf(l.date)}요일</div>
                   </div>}
               {edit?.id!==l.id&&
@@ -1247,7 +1401,7 @@ function LessonsList({lessons,today,onEdit,onDelete}){
                   </button>
                   {menu===l.id&&
                     <div role="menu" className="menu" onClick={e=>e.stopPropagation()}>
-                      <button role="menuitem" className="btn plain" onClick={()=>{setMenu(null);setEdit({id:l.id,text:l.text});}}>수정</button>
+                      <button role="menuitem" className="btn plain" onClick={()=>{setMenu(null);setEdit({id:l.id,text:l.text,try:l.try||""});}}>수정</button>
                       <button role="menuitem" className="btn" onClick={()=>{setMenu(null);onDelete(l.id);}}>삭제</button>
                     </div>}
                 </div>}
@@ -1416,10 +1570,31 @@ const CSS=`
 
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:var(--bg)}
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-  .chip.kind{font-weight:600}
-  .chip.kind.prob{background:rgba(255,59,48,.12);color:var(--red)}
-  .chip.kind.try{background:rgba(var(--blue-rgb),.12);color:var(--blue)}
-  .line-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;margin-top:21px}
+  .prio-row{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 14px 56px;margin-top:-4px}
+  .prio-row .btn.tag{font-size:14px;padding:6px 10px;border-radius:8px;opacity:.55;box-shadow:inset 0 0 0 1.5px transparent}
+  .prio-row .btn.tag.sel{opacity:1;box-shadow:inset 0 0 0 1.5px var(--t-ink)}
+  .sum-ok{align-self:center;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--green);margin-left:6px}
+  .seg{display:flex;gap:4px;margin-top:14px}
+  .seg>span{flex:1;height:8px;border-radius:4px;background:var(--fill)}
+  .seg>span.on{background:var(--red)}
+  .card-note{font-size:15px;color:var(--label2);margin:10px 0 0}
+  .pbar{flex:1;height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:0 4px}
+  .pbar>span{display:block;height:100%;border-radius:3px;background:var(--blue)}
+  .pbar>span.full{background:var(--green)}
+  .lcard{background:var(--cell);border-radius:26px;margin-top:14px;overflow:hidden}
+  .lfield{padding:14px 18px 14px}
+  .lfield+.lfield{border-top:.5px solid var(--sep);margin-left:18px;padding-left:0}
+  .lfield-head{display:flex;justify-content:space-between;align-items:center;min-height:22px;margin-bottom:4px}
+  .lfield-label{font-size:13px;font-weight:600;letter-spacing:0}
+  .lsug{margin-top:12px;padding:12px 14px;border-radius:16px;background:rgba(var(--blue-rgb),.08)}
+  .lsug-label{font-size:12px;font-weight:600;color:var(--blue)}
+  .lsug-text{font-size:16px;line-height:1.4;margin-top:3px}
+  .btn.ladd{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:14px;padding:16px;border-radius:26px;
+    border:1.5px dashed var(--gray3);color:var(--blue);font-size:17px;font-weight:600}
+  .btn.ladd span{font-size:22px;line-height:1;font-weight:500}
+  .btn.ladd:active{background:var(--fill2)}
+  .ltry{margin-top:8px;padding:8px 12px;border-radius:12px;background:var(--fill2);font-size:16px}
+  .ltry .lfield-label{display:block;margin-bottom:2px}
   .ta.line{min-height:24px;line-height:1.45;overflow:hidden}
   .btn.line-x{color:var(--gray2);font-size:20px;line-height:1;width:26px;height:26px;border-radius:13px;flex:0 0 auto;margin-top:-1px}
   .btn.line-x:hover{background:var(--fill2)}
