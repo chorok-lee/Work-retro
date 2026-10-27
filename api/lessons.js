@@ -1,6 +1,6 @@
 /* /api/lessons — 레슨런 (그날 배운 것 한 줄)
-   GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  { lessons: [{ id, date, text, tags }] }
-   POST   { date, text }                  →  { id }   (행 생성)
+   GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  { lessons: [{ id, date, text, tags, kind }] }
+   POST   { date, items:[{text, kind}] }  →  { items:[{ id, tags, kind }] }   (줄마다 행 생성)
    PATCH  { id, text }                    →  내용 수정
    DELETE { id }                          →  행 보관 처리
 
@@ -40,11 +40,15 @@ async function lessonsDb() {
   }
   /* 태그(다중 선택)는 있을 때만 씀 — 저장할 때 내용에서 키워드를 뽑아 자동으로 붙임 */
   const pTags = byName(props, ["태그", "Tags", "키워드"], ["multi_select"], used);
-  cached = { id, pTitle, pDate, pTags };
+  /* 종류(선택): 상황/문제 · 해볼 것 — 있을 때만 씀 */
+  const pKind = byName(props, ["종류", "Kind", "유형"], ["select"], used);
+  cached = { id, pTitle, pDate, pTags, pKind };
   return cached;
 }
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+const KINDS = ["상황/문제", "해볼 것"];
+const kindOf = (k) => (KINDS.includes(k) ? k : "");
 const plain = (rich) => (rich || []).map((t) => t.plain_text).join("").trim();
 
 export default async function handler(req, res) {
@@ -69,28 +73,37 @@ export default async function handler(req, res) {
           date: page.properties?.[L.pDate]?.date?.start || "",
           text: plain(page.properties?.[L.pTitle]?.title),
           tags: L.pTags ? (page.properties?.[L.pTags]?.multi_select || []).map((o) => o.name) : [],
+          kind: L.pKind ? page.properties?.[L.pKind]?.select?.name || "" : "",
         }))
         .filter((l) => l.date && l.text);
       res.setHeader("Cache-Control", "no-store");
       return res.status(200).json({ lessons });
     }
 
+    /* 저장: { date, items:[{ text, kind }] } — 줄마다 한 행. 예전 형태 { date, text }도 받음 */
     if (req.method === "POST") {
-      const text = String(b.text || "").trim().slice(0, 500);
-      if (!text || !isDate(b.date)) return res.status(400).json({ error: "text와 date(YYYY-MM-DD)가 필요합니다." });
-      const tags = extractTags(text);
-      const page = await notion("/pages", {
-        method: "POST",
-        body: {
-          parent: { database_id: L.id },
-          properties: {
-            [L.pTitle]: { title: [{ text: { content: text } }] },
-            [L.pDate]: { date: { start: b.date } },
-            ...(L.pTags ? { [L.pTags]: { multi_select: tags.map((name) => ({ name })) } } : {}),
+      const raw = Array.isArray(b.items) ? b.items : [{ text: b.text, kind: b.kind }];
+      const items = raw.map((it) => ({ text: String(it?.text || "").trim().slice(0, 500), kind: kindOf(it?.kind) }))
+        .filter((it) => it.text).slice(0, 30);
+      if (!items.length || !isDate(b.date)) return res.status(400).json({ error: "items(또는 text)와 date(YYYY-MM-DD)가 필요합니다." });
+      const saved = [];
+      for (const it of items) {   // 노션 초당 호출 제한을 넘지 않도록 차례로
+        const tags = extractTags(it.text);
+        const page = await notion("/pages", {
+          method: "POST",
+          body: {
+            parent: { database_id: L.id },
+            properties: {
+              [L.pTitle]: { title: [{ text: { content: it.text } }] },
+              [L.pDate]: { date: { start: b.date } },
+              ...(L.pTags ? { [L.pTags]: { multi_select: tags.map((name) => ({ name })) } } : {}),
+              ...(L.pKind && it.kind ? { [L.pKind]: { select: { name: it.kind } } } : {}),
+            },
           },
-        },
-      });
-      return res.status(200).json({ id: page.id, tags: L.pTags ? tags : [] });
+        });
+        saved.push({ id: page.id, tags: L.pTags ? tags : [], kind: L.pKind ? it.kind : "" });
+      }
+      return res.status(200).json({ items: saved, id: saved[0].id, tags: saved[0].tags });
     }
 
     if (req.method === "PATCH") {

@@ -40,3 +40,42 @@ export function extractTags(text) {
   }
   return words;
 }
+
+/* ── 레슨런 입력 도우미 ── */
+
+/* 붙여넣은 여러 줄 → 줄마다 하나 ("- ", "• ", "1. " 같은 불릿은 떼고, 빈 줄은 버림) */
+export function splitLines(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:[-•*·]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean);
+}
+
+/* 규칙 기반 '해볼 것' 제안 — AI(ANTHROPIC_API_KEY)가 없거나 실패할 때 쓰는 대비책.
+   상황/문제 문장에 걸리는 패턴마다 해볼 것 하나. 이미 적은 해볼 것과 주제가 겹치면 건너뜀. */
+const TRY_RULES = [
+  [/늦잠|늦게\s*자|수면|잠을|스마트폰|폰\s*하느라|컨디션/, "자기 1시간 전에 스마트폰을 멀리 두고 잘 시간 정해 두기"],
+  [/집중|산만|방해|딴짓|멍/, "오전 첫 2시간은 알림을 끄고 가장 중요한 일 하나만 하기"],
+  [/우선순위|중요한\s*(?:업무|일)|뭘\s*해야|모호/, "하루를 시작하기 전에 오늘 꼭 끝낼 일 1개를 먼저 정하기"],
+  [/기준|결과물|예상\s*안|범위|스코프/, "계획할 때 결과물과 완료 기준을 한 줄로 적고 걸릴 시간 어림하기"],
+  [/기획서|업데이트\s*안|공유\s*안|정보가\s*없|누락|빠져/, "필요한 정보가 비어 있으면 작업 전에 담당자에게 바로 요청하기"],
+  [/회의|미팅|안건/, "회의 전날 안건과 결정할 것을 미리 공유하기"],
+  [/비효율|두\s*번|2번|다시\s*하|재작업/, "시작 전에 요구사항을 한 번 더 확인해 다시 하는 일 줄이기"],
+  [/시간\s*(?:날|낭비)|날려|지연|밀렸|늦어/, "막히면 30분 안에 도움을 요청하거나 다른 일로 넘어가기"],
+  [/리뷰|피드백|검토/, "리뷰 요청은 오전에 보내고 받을 시점을 함께 적기"],
+  [/티타임|잡담|코어\s*타임/, "코어 타임에는 짧은 휴식만 두고 긴 대화는 오후 늦게로 옮기기"],
+];
+
+export function suggestTriesByRules(problems, tries) {
+  const tryTags = new Set((tries || []).flatMap((t) => extractTags(t)));
+  const out = [];
+  (problems || []).forEach((p, i) => {
+    const pTags = extractTags(p);
+    if (pTags.some((t) => tryTags.has(t))) return;          // 이미 같은 주제의 해볼 것이 있음
+    const rule = TRY_RULES.find(([re]) => re.test(p));
+    if (!rule || out.some((s) => s.text === rule[1])) return;
+    if (extractTags(rule[1]).some((t) => tryTags.has(t))) return;   // 제안 자체가 이미 적은 해볼 것과 같은 주제
+    out.push({ problem: i, text: rule[1] });
+  });
+  return out.slice(0, 3);
+}
