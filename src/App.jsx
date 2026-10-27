@@ -547,7 +547,6 @@ export default function App(){
   const selD=fromISO(selDate);
   const selWk=weekOfMonth(weekStart);
   const dayLabel=selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`;
-  const thisWeekLessons=lessons.filter(l=>l.date>=toISO(curMon)&&l.date<=today);
 
   /* 내비게이션 — iOS처럼 큰 제목 + 위쪽 막대(스크롤하면 작은 제목) + 아래 탭 막대 */
   const [scrolled,setScrolled]=useState(false);
@@ -659,11 +658,8 @@ export default function App(){
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)}/>
             <SummaryCard icon="flag" color="var(--red)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
-              {...(wkStat.core.total
-                ? {value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"핵심",
-                   foot:wkStat.core.done===wkStat.core.total?"핵심 과업을 모두 끝냈어요":`핵심 과업이 ${wkStat.core.total-wkStat.core.done}개 남았어요`}
-                : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료",foot:"이번 주 마감인 핵심 과업은 없어요"}
-                : {empty:"할 일이 없어요",foot:"이번 주 마감인 과업이 없어요"})}
+              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"핵심"}
+                : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
               bars={thisWeek.map(d=>{const ts=weekTaskList.filter(t=>t.date===d);return ts.length?ts.filter(t=>t.done).length:d>today?null:0;})}
               max={Math.max(1,...thisWeek.map(d=>weekTaskList.filter(t=>t.date===d).length))}/>
@@ -671,7 +667,6 @@ export default function App(){
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" bars={weekRatings} max={5}/>
             <SummaryCard icon="bulb" color="var(--purple)" title="레슨런" meta={latestLesson?shortDate(latestLesson.date):""} onOpen={()=>openSub("lessons")}
               empty={latestLesson?null:"아직 없어요"} quote={latestLesson?.text||latestLesson?.try}
-              foot={thisWeekLessons.length?`이번 주에 ${thisWeekLessons.length}개 남겼어요`:"이번 주에는 아직 없어요"}
               loading={lessonMode==="loading"}/>
           </div>
         )}
@@ -831,9 +826,8 @@ function TaskDashboard({tasks,loading,today,curMon}){
             <div className="value"><span className="num">{allDone?"모두 달성":`${st.core.done}/${st.core.total}`}</span>
               {!allDone&&<small>완료</small>}</div>
             <div className="seg" aria-hidden="true">{Array.from({length:st.core.total},(_,i)=><span key={i} className={i<st.core.done?"on":undefined}/>)}</div>
-            <p className="card-note">{allDone?`핵심 과업 ${st.core.total}개를 모두 끝냈어요.`:`핵심 과업 ${st.core.total}개 중 ${st.core.total-st.core.done}개가 남았어요.`}</p>
           </>
-        : <p className="card-note" style={{marginTop:10}}>이번 주 마감인 핵심 과업이 없어요.</p>}
+        : <div className="value"><span className="num">없어요</span></div>}
     </div>
 
     <section className="group">
@@ -1265,7 +1259,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
         <div className="navbar-in">
           <button className="btn glass-ico" onClick={onClose} aria-label="닫기"><Chevron dir="l" size={20}/></button>
           <span className="nav-title">레슨런</span>
-          <button className="btn txt strong" style={{justifySelf:"end"}} disabled={!filled||busy} onClick={save}>저장</button>
+          <button className="btn txt strong" style={{justifySelf:"end"}} disabled={!filled||busy} onClick={save}>{busy?"저장 중":"저장"}</button>
         </div>
       </header>
       <div className="wrap" style={{paddingTop:4}}>
@@ -1302,10 +1296,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave}){
                 </div>}
             </div>
           </section>);})}
-        <button className="btn ladd" onClick={add}><span aria-hidden="true">+</span> 레슨런 추가</button>
-        <p className="group-foot" style={{marginTop:10}}>카드 한 장에 상황/문제와 해볼 것을 하나씩 적어요. 한쪽만 적어도 괜찮아요.</p>
-        <button className="btn filled" style={{width:"100%",marginTop:22}} disabled={!filled||busy} onClick={save}>
-          {busy?"저장 중":filled?`${filled}개 저장하기`:"저장하기"}</button>
+        <button className="btn ladd" onClick={add}><span className="add-ico" aria-hidden="true"/>레슨런 추가</button>
       </div>
     </div>
   );
@@ -1577,22 +1568,20 @@ const CSS=`
   .seg{display:flex;gap:4px;margin-top:14px}
   .seg>span{flex:1;height:8px;border-radius:4px;background:var(--fill)}
   .seg>span.on{background:var(--red)}
-  .card-note{font-size:15px;color:var(--label2);margin:10px 0 0}
   .pbar{flex:1;height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:0 4px}
   .pbar>span{display:block;height:100%;border-radius:3px;background:var(--blue)}
   .pbar>span.full{background:var(--green)}
-  .lcard{background:var(--cell);border-radius:26px;margin-top:14px;overflow:hidden}
-  .lfield{padding:14px 18px 14px}
+  .lcard{background:var(--cell);border-radius:26px;margin-top:12px;overflow:hidden}
+  .lfield{padding:11px 18px 12px}
   .lfield+.lfield{border-top:.5px solid var(--sep);margin-left:18px;padding-left:0}
-  .lfield-head{display:flex;justify-content:space-between;align-items:center;min-height:22px;margin-bottom:4px}
+  .lfield-head{display:flex;justify-content:space-between;align-items:center;min-height:20px;margin-bottom:2px}
   .lfield-label{font-size:13px;font-weight:600;letter-spacing:0}
   .lsug{margin-top:12px;padding:12px 14px;border-radius:16px;background:rgba(var(--blue-rgb),.08)}
   .lsug-label{font-size:12px;font-weight:600;color:var(--blue)}
   .lsug-text{font-size:16px;line-height:1.4;margin-top:3px}
-  .btn.ladd{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:14px;padding:16px;border-radius:26px;
-    border:1.5px dashed var(--gray3);color:var(--blue);font-size:17px;font-weight:600}
-  .btn.ladd span{font-size:22px;line-height:1;font-weight:500}
-  .btn.ladd:active{background:var(--fill2)}
+  .btn.ladd{display:flex;align-items:center;gap:12px;min-height:44px;margin-top:6px;padding:0 18px;color:var(--blue);font-size:17px}
+  .btn.ladd:active{opacity:.5}
+  .lfield-head .btn.line-x{margin:-4px -6px -4px 0}
   .ltry{margin-top:8px;padding:8px 12px;border-radius:12px;background:var(--fill2);font-size:16px}
   .ltry .lfield-label{display:block;margin-bottom:2px}
   .ta.line{min-height:24px;line-height:1.45;overflow:hidden}
