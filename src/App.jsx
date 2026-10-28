@@ -606,7 +606,9 @@ export default function App(){
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
             <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
               loading={isNotion&&tasks[selDate]===undefined&&!tasksErr}
-              priorities={isNotion?priorities:PRIOS.map((name,i)=>({name,color:["red","orange","blue","gray"][i]}))}
+              priorities={isNotion?priorities:PRIOS.map((name,i)=>({name,color:["red","yellow","green","default"][i]}))}
+              onPriority={(t,name)=>{const src=isNotion?priorities:PRIOS.map((n,i)=>({name:n,color:["red","yellow","green","default"][i]}));
+                patchTask(t.id,{priority:name,priorityColor:src.find(o=>o.name===name)?.color||""});}}
               dbUrl={isNotion?dbLink(tasksDb):""}
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}/>
 
@@ -1093,12 +1095,18 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority}){
   const [draft,setDraft]=useState("");
-  const [prio,setPrio]=useState("");      // 새 할 일의 우선순위 (노션 선택지)
-  const prioOpt=priorities.find(o=>o.name===prio);
+  /* 새 할 일의 우선순위 — 기본 '낮음'(없으면 마지막 선택지). 태그를 눌러 팝오버에서 바꿈 */
+  const defPrio=(priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
+  const [prio,setPrio]=useState(null);   // null = 기본값
+  const cur=prio??defPrio;
+  const [pop,setPop]=useState(null);     // { id: 과업 id 또는 "new", rect }
   const [edit,setEdit]=useState(null);   // { id, text }
-  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,prioOpt?prio:"");setDraft("");setPrio("");};
+  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,priorities.some(o=>o.name===cur)?cur:"");setDraft("");setPrio(null);};
+  const openPop=(id,e)=>{e.stopPropagation();setPop({id,rect:e.currentTarget.getBoundingClientRect()});};
+  const tagOf=(name,color,onClick,label)=>(
+    <button className={"btn tag c-"+(NOTION_COLORS.includes(color)?color:"default")} aria-haspopup="menu" aria-label={label} onClick={onClick}>{name}</button>);
   const commit=()=>{
     if(!edit) return;
     const t=tasks.find(x=>x.id===edit.id), v=edit.text.trim();
@@ -1130,8 +1138,9 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
                     onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
                     onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
                 : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
-              {t.priority&&edit?.id!==t.id&&
-                <span className={"tag c-"+(NOTION_COLORS.includes(t.priorityColor)?t.priorityColor:"default")} aria-label={`우선순위 ${t.priority}`}>{t.priority}</span>}
+              {edit?.id!==t.id&&priorities.length>0&&(t.priority
+                ? tagOf(t.priority,t.priorityColor,(e)=>openPop(t.id,e),`우선순위 ${t.priority}, 바꾸기`)
+                : <button className="btn prio-empty" aria-haspopup="menu" onClick={(e)=>openPop(t.id,e)}>우선순위</button>)}
             </div>
           </div>
         ))}
@@ -1142,20 +1151,45 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
               aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
             {draft.trim()&&<button className="btn txt strong" onClick={add}>추가</button>}
+            {priorities.length>0&&(cur
+              ? tagOf(cur,priorities.find(o=>o.name===cur)?.color,(e)=>openPop("new",e),`새 할 일 우선순위 ${cur}, 바꾸기`)
+              : <button className="btn prio-empty" aria-haspopup="menu" onClick={(e)=>openPop("new",e)}>우선순위</button>)}
           </div>
         </div>
-        {/* 쓰기 시작하면 우선순위 고르는 줄이 나옴 (노션 선택지·색 그대로, 다시 누르면 해제) */}
-        {draft.trim()&&priorities.length>0&&
-          <div className="prio-row" role="radiogroup" aria-label="새 할 일 우선순위">
-            {priorities.map(o=>(
-              <button key={o.name} role="radio" aria-checked={prio===o.name}
-                className={"btn tag c-"+(NOTION_COLORS.includes(o.color)?o.color:"default")+(prio===o.name?" sel":"")}
-                onClick={()=>setPrio(p=>p===o.name?"":o.name)}>{o.name}</button>))}
-          </div>}
       </div>
+      {pop&&<PrioPopover rect={pop.rect} options={priorities}
+        value={pop.id==="new"?cur:(tasks.find(t=>t.id===pop.id)?.priority||"")}
+        onClose={()=>setPop(null)}
+        onPick={(name)=>{const id=pop.id;setPop(null);
+          if(id==="new") setPrio(name);
+          else{const t=tasks.find(x=>x.id===id);if(t&&t.priority!==name)onPriority(t,name);}}}/>}
       {!loading&&tasks.length===0&&!err&&<p className="group-foot">이날 마감인 할 일이 없어요. 노션 과업 목록과 함께 맞춰져요.</p>}
     </section>
   );
+}
+
+/* ── 우선순위 팝오버 — 태그 아래(화면 아래쪽이면 위)에 뜨는 선택 목록. 고르면 바로 반영 ──
+   목록(.cells)이 잘라내지 않도록 화면 기준(fixed)으로 띄움 */
+function PrioPopover({rect,options,value,onPick,onClose}){
+  useEffect(()=>{
+    const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};
+    document.addEventListener("keydown",esc,true); window.addEventListener("scroll",onClose,{passive:true});
+    return()=>{document.removeEventListener("keydown",esc,true);window.removeEventListener("scroll",onClose);};
+  },[onClose]);
+  const H=(options.length+1)*44+12, below=rect.bottom+8+H<window.innerHeight;
+  const style={right:Math.max(12,window.innerWidth-rect.right),...(below?{top:rect.bottom+8}:{bottom:window.innerHeight-rect.top+8})};
+  const row=(name,color,label)=>(
+    <button key={name||"none"} role="menuitemradio" aria-checked={value===name} className="btn pop-row" onClick={()=>onPick(name)}>
+      {name?<span className={"tag c-"+(NOTION_COLORS.includes(color)?color:"default")}>{name}</span>:<span>{label}</span>}
+      <span className="pop-check" aria-hidden="true">{value===name?"✓":""}</span>
+    </button>);
+  return(<>
+    <div className="pop-scrim" onClick={onClose}/>
+    <div role="menu" aria-label="우선순위" className="pop fade" style={style}>
+      {options.map(o=>row(o.name,o.color))}
+      {row("",null,"없음")}
+    </div>
+  </>);
 }
 
 /* ── 하루 평가 ── 접힌 상태: 한 줄 / 펼친 상태: 별 5개 + '레슨런 쓰기' + 제출하기 */
@@ -1254,7 +1288,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
           <section key={c.id} className="lcard" aria-label={`레슨런 ${i+1}`}>
             <div className="lfield">
               <div className="lfield-head">
-                <span className="lfield-label" style={{color:"var(--red)"}}>상황/문제</span>
+                <span className="lfield-label">상황/문제</span>
                 {!single&&(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
               </div>
               <textarea ref={el=>{refs.current[c.id+"p"]=el;}} className="ta line" rows={1} value={c.p} maxLength={500}
@@ -1263,7 +1297,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();setFocusId(c.id+"t");}}}/>
             </div>
             <div className="lfield">
-              <div className="lfield-head"><span className="lfield-label" style={{color:"var(--blue)"}}>해볼 것</span></div>
+              <div className="lfield-head"><span className="lfield-label">해볼 것</span></div>
               <textarea ref={el=>{refs.current[c.id+"t"]=el;}} className="ta line" rows={1} value={c.t} maxLength={500}
                 placeholder={showSug?"직접 쓰거나 아래 제안을 넣어요":"다음에 바꿔 볼 행동"} aria-label={`해볼 것 ${i+1}`}
                 onChange={e=>patch(c.id,{t:e.target.value})}
@@ -1332,6 +1366,15 @@ function LessonEditSheet({lesson,suggest,onClose,onSave,onDelete}){
     onSave={async()=>{const c=draft.cards[0];await onSave(c.p.trim(),c.t.trim());}}/>;
 }
 
+/* 여러 줄 글 — 불릿(- • * ·)·번호(1. 1))로 시작하는 줄이 2개 이상이면 불릿 목록으로, 아니면 줄바꿈만 살림 */
+const BULLET=/^\s*(?:[-•*·]|\d+[.)])\s+/;
+function Lines({text}){
+  const lines=String(text||"").split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  if(lines.filter(l=>BULLET.test(l)).length>=2)
+    return <ul className="lbullets">{lines.map((l,i)=><li key={i}>{l.replace(BULLET,"")}</li>)}</ul>;
+  return lines.map((l,i)=><div key={i}>{l}</div>);
+}
+
 /* ── 레슨런 목록 ── 날짜별로 묶고(날짜는 그룹 머리에 한 번), 줄 = 상황/문제 + 해볼 것 한 줄. 누르면 편집 시트 */
 function LessonsList({lessons,today,onOpen}){
   const groups=[];
@@ -1348,8 +1391,11 @@ function LessonsList({lessons,today,onOpen}){
           <button key={l.id} className="btn cell tap" style={{alignItems:"flex-start"}} onClick={()=>onOpen(l)}>
             <div className="cell-body" style={{alignItems:"flex-start",padding:"12px 16px 12px 0"}}>
               <div className="cell-main">
-                {l.text&&<div className="cell-title" style={{whiteSpace:"pre-wrap",lineHeight:1.4}}>{l.text}</div>}
-                {l.try&&<div className={"ltry"+(l.text?"":" solo")}><span className="lfield-label" style={{color:"var(--blue)"}}>해볼 것</span>{l.try}</div>}
+                {/* 해볼 것이 레슨런의 핵심 — 상자로 강조하고, 상황/문제는 그 위에 보조 글자로. '해볼 것' 글자 대신 ↳ 표시 */}
+                {l.text&&<div className={l.try?"lprob":"cell-title"} style={{lineHeight:1.4}}><Lines text={l.text}/></div>}
+                {l.try&&<div className={"ltry"+(l.text?"":" solo")}>
+                  <svg className="ltry-ico" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 2v4.5A2.5 2.5 0 0 0 5.5 9H11M8.5 6.5 11 9l-2.5 2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  <div style={{minWidth:0,flex:1}}><span className="sr-only">해볼 것: </span><Lines text={l.try}/></div></div>}
               </div>
               <span className="disclosure" style={{marginTop:2}}><Chevron size={14}/></span>
             </div>
@@ -1511,9 +1557,14 @@ const CSS=`
   .tab.on{color:var(--blue);background:var(--fill2)}
 
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:var(--bg)}
-  .prio-row{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 14px 56px;margin-top:-4px}
-  .prio-row .btn.tag{font-size:14px;padding:6px 10px;border-radius:8px;opacity:.55;box-shadow:inset 0 0 0 1.5px transparent}
-  .prio-row .btn.tag.sel{opacity:1;box-shadow:inset 0 0 0 1.5px var(--t-ink)}
+  .btn.tag{cursor:pointer}
+  .btn.prio-empty{flex:0 0 auto;font-size:13px;color:var(--label3)}
+  .pop-scrim{position:fixed;inset:0;z-index:95}
+  .pop{position:fixed;z-index:96;min-width:170px;padding:6px 0;background:var(--bar);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);
+    border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  .btn.pop-row{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;min-height:44px;padding:0 16px;font-size:17px;color:var(--label)}
+  .btn.pop-row:active{background:var(--fill2)}
+  .pop-check{color:var(--blue);font-weight:600;width:14px}
   .sum-ok{align-self:center;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--green);margin-left:6px}
   .seg{display:flex;gap:4px;margin-top:14px}
   .seg>span{flex:1;height:8px;border-radius:4px;background:var(--fill)}
@@ -1525,16 +1576,21 @@ const CSS=`
   .lfield{padding:11px 18px 12px}
   .lfield+.lfield{border-top:.5px solid var(--sep);margin-left:18px;padding-left:0}
   .lfield-head{display:flex;justify-content:space-between;align-items:center;min-height:20px;margin-bottom:2px}
-  .lfield-label{font-size:13px;font-weight:600;letter-spacing:0}
+  .lfield-label{font-size:13px;font-weight:600;letter-spacing:0;color:var(--label2)}
   .lsug{margin-top:12px;padding:12px 14px;border-radius:16px;background:rgba(var(--blue-rgb),.08)}
   .lsug-label{font-size:12px;font-weight:600;color:var(--blue)}
   .lsug-text{font-size:16px;line-height:1.4;margin-top:3px}
   .btn.ladd{display:flex;align-items:center;gap:12px;min-height:44px;margin-top:6px;padding:0 18px;color:var(--blue);font-size:17px}
   .btn.ladd:active{opacity:.5}
   .lfield-head .btn.line-x{margin:-4px -6px -4px 0}
-  .ltry{margin-top:4px;font-size:15px;line-height:1.4;color:var(--label2);white-space:pre-wrap}
-  .ltry .lfield-label{margin-right:6px}
-  .ltry.solo{margin-top:0;font-size:17px;color:var(--label)}
+  .lprob{font-size:15px;color:var(--label2)}
+  .ltry{display:flex;gap:8px;margin-top:8px;padding:10px 12px;border-radius:12px;background:var(--fill2);font-size:17px;line-height:1.4;color:var(--label)}
+  .ltry.solo{margin-top:0}
+  .ltry-ico{flex:0 0 auto;margin-top:4px;color:var(--label3)}
+  .lbullets{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+  .lbullets li{position:relative;padding-left:14px}
+  .lbullets li::before{content:"•";position:absolute;left:0;color:var(--label2)}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
   .ta.line{min-height:24px;line-height:1.45;overflow:hidden}
   .btn.line-x{color:var(--gray2);font-size:20px;line-height:1;width:26px;height:26px;border-radius:13px;flex:0 0 auto;margin-top:-1px}
   .btn.line-x:hover{background:var(--fill2)}
