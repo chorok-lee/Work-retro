@@ -418,6 +418,24 @@ export default function App(){
     }finally{ taskWriteAt.current=Date.now(); }
   };
 
+  /* 할 일 내일로 미루기·삭제 — 오늘 목록에서 먼저 빼고, 실패하면 되돌림 */
+  const dropTask=async(id,req,doneMsg,moveTo)=>{
+    const date=selDate, list0=tasks[date]||[], t=list0.find(x=>x.id===id); if(!t) return;
+    taskWriteAt.current=Date.now();
+    setTasks(p=>{const o={...p,[date]:(p[date]||[]).filter(x=>x.id!==id)};
+      if(moveTo&&o[moveTo])o[moveTo]=[...o[moveTo],{...t,date:moveTo}];return o;});
+    setToast(doneMsg);
+    if(sync.mode!=="notion"||String(id).startsWith("tmp")) return;
+    try{ await api("/api/tasks",req); }
+    catch(e){
+      setTasks(p=>{const o={...p,[date]:list0};if(moveTo&&o[moveTo])o[moveTo]=o[moveTo].filter(x=>x.id!==id);return o;});
+      setToast(e.message||"노션에 저장하지 못했어요.");
+    }finally{ taskWriteAt.current=Date.now(); }
+  };
+  const moveTaskTomorrow=(t)=>{const d=nextWorkday(selDate);
+    dropTask(t.id,{method:"PATCH",body:JSON.stringify({id:t.id,date:d})},"내일로 옮겼어요",d);};
+  const deleteTask=(t)=>dropTask(t.id,{method:"DELETE",body:JSON.stringify({id:t.id})},"삭제했어요");
+
   const setRating=async(date,score)=>{
     const prev=ratings[date]||0;
     const apply=(v)=>setRatings(p=>{const o={...p};if(v)o[date]=v;else delete o[date];return o;});
@@ -573,7 +591,10 @@ export default function App(){
   /* 회고 요약 카드에 들어갈 이번 주 숫자 */
   const thisWeek=weekDatesFrom(curMon);
   const pace=paceOf(list);
-  const dayChecks=thisWeek.map(d=>d>today?null:list.filter(h=>isLogged(h.id,d)).length);
+  /* 요약 막대 = 최근 평일 5일, 오늘(주말이면 직전 금요일)이 맨 오른쪽 — 건강 앱처럼 */
+  const recent5=[workToday];
+  while(recent5.length<5) recent5.unshift(prevWorkday(recent5[0]));
+  const dayChecks=recent5.map(d=>list.filter(h=>isLogged(h.id,d)).length);
   const weekRatings=thisWeek.map(d=>d>today?null:(ratings[d]||0));
   const rated=weekRatings.filter(v=>v);
   const ratingAvg=rated.length?(rated.reduce((a,b)=>a+b,0)/rated.length):null;
@@ -619,7 +640,8 @@ export default function App(){
               onPriority={(t,name)=>{const src=isNotion?priorities:PRIOS.map((n,i)=>({name:n,color:["red","yellow","green","default"][i]}));
                 patchTask(t.id,{priority:name,priorityColor:src.find(o=>o.name===name)?.color||""});}}
               dbUrl={isNotion?dbLink(tasksDb):""}
-              onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}/>
+              onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}
+              onTomorrow={moveTaskTomorrow} onDelete={deleteTask}/>
 
             {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
             {list.length>0&&
@@ -661,13 +683,13 @@ export default function App(){
         {!booting&&tab==="review"&&(
           <div className="fade summary">
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
-              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={thisWeek.indexOf(workToday)}/>
+              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={4}/>
             <SummaryCard icon="flag" color="var(--red)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
               {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"핵심"}
                 : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
-              bars={thisWeek.map(d=>{const ts=weekTaskList.filter(t=>t.date===d);return ts.length?ts.filter(t=>t.done).length:d>today?null:0;})}
-              max={Math.max(1,...thisWeek.map(d=>weekTaskList.filter(t=>t.date===d).length))} hi={thisWeek.indexOf(workToday)}/>
+              bars={recent5.map(d=>allTasks.filter(t=>t.date===d&&t.done).length)}
+              max={Math.max(1,...recent5.map(d=>allTasks.filter(t=>t.date===d).length))} hi={4}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" stars={ratingAvg}/>
           </div>
@@ -772,7 +794,7 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,
         </div>
         {bars&&
           <svg className="sum-bars" viewBox="0 0 96 56" width="96" height="56" aria-hidden="true">
-            {bars.map((v,i)=>{const h=v==null?0:Math.max(4,52*v/max);
+            {bars.map((v,i)=>{const h=v==null?0:Math.max(6,52*v/max);
               return <rect key={i} x={i*20+1} y={56-h} width="14" height={h} rx="2.5" fill={i===hi?color:"var(--gray4)"}/>;})}
           </svg>}
         {stars!=null&&
@@ -1111,13 +1133,14 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onTomorrow,onDelete}){
   const [draft,setDraft]=useState("");
   /* 새 할 일의 우선순위 — 기본 '낮음'(없으면 마지막 선택지). 태그를 눌러 팝오버에서 바꿈 */
   const defPrio=(priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
   const [prio,setPrio]=useState(null);   // null = 기본값
   const cur=prio??defPrio;
   const [pop,setPop]=useState(null);     // { id: 과업 id 또는 "new", rect }
+  const [more,setMore]=useState(null);   // ⋯ 메뉴 { t, rect }
   const [edit,setEdit]=useState(null);   // { id, text }
   const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,priorities.some(o=>o.name===cur)?cur:"");setDraft("");setPrio(null);};
   const openPop=(id,e)=>{e.stopPropagation();setPop({id,rect:e.currentTarget.getBoundingClientRect()});};
@@ -1157,22 +1180,30 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
               {edit?.id!==t.id&&priorities.length>0&&(t.priority
                 ? tagOf(t.priority,t.priorityColor,(e)=>openPop(t.id,e),`우선순위 ${t.priority}, 바꾸기`)
                 : <button className="btn prio-empty" aria-haspopup="menu" onClick={(e)=>openPop(t.id,e)}>우선순위</button>)}
+              {edit?.id!==t.id&&
+                <button className="btn more" aria-label={`${t.title} 더보기`} aria-haspopup="menu"
+                  onClick={(e)=>{e.stopPropagation();setMore({t,rect:e.currentTarget.getBoundingClientRect()});}}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="7.6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="16.4" cy="12" r="1.3" fill="currentColor"/></svg>
+                </button>}
             </div>
           </div>
         ))}
         <div className="cell">
           <span className="add-ico" aria-hidden="true"/>
           <div className="cell-body">
-            <input className="cell-input" value={draft} maxLength={200} placeholder="할 일 추가"
+            <input className="cell-input" value={draft} maxLength={200} placeholder="할 일 추가" enterKeyHint="done"
               aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
-            {draft.trim()&&<button className="btn txt strong" onClick={add}>추가</button>}
             {priorities.length>0&&(cur
               ? tagOf(cur,priorities.find(o=>o.name===cur)?.color,(e)=>openPop("new",e),`새 할 일 우선순위 ${cur}, 바꾸기`)
               : <button className="btn prio-empty" aria-haspopup="menu" onClick={(e)=>openPop("new",e)}>우선순위</button>)}
           </div>
         </div>
       </div>
+      {more&&<Popover rect={more.rect} rows={2} label="할 일 더보기" onClose={()=>setMore(null)}>
+        <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onTomorrow(t);}}>내일 하기</button>
+        <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
+      </Popover>}
       {pop&&<PrioPopover rect={pop.rect} options={priorities}
         value={pop.id==="new"?cur:(tasks.find(t=>t.id===pop.id)?.priority||"")}
         onClose={()=>setPop(null)}
@@ -1186,26 +1217,30 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
 
 /* ── 우선순위 팝오버 — 태그 아래(화면 아래쪽이면 위)에 뜨는 선택 목록. 고르면 바로 반영 ──
    목록(.cells)이 잘라내지 않도록 화면 기준(fixed)으로 띄움 */
-function PrioPopover({rect,options,value,onPick,onClose}){
+function Popover({rect,rows,label,onClose,children}){
   useEffect(()=>{
     const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};
     document.addEventListener("keydown",esc,true); window.addEventListener("scroll",onClose,{passive:true});
     return()=>{document.removeEventListener("keydown",esc,true);window.removeEventListener("scroll",onClose);};
   },[onClose]);
-  const H=(options.length+1)*44+12, below=rect.bottom+8+H<window.innerHeight;
+  const H=rows*44+12, below=rect.bottom+8+H<window.innerHeight;
   const style={right:Math.max(12,window.innerWidth-rect.right),...(below?{top:rect.bottom+8}:{bottom:window.innerHeight-rect.top+8})};
+  return(<>
+    <div className="pop-scrim" onClick={onClose}/>
+    <div role="menu" aria-label={label} className="pop fade" style={style}>{children}</div>
+  </>);
+}
+function PrioPopover({rect,options,value,onPick,onClose}){
   const row=(name,color,label)=>(
     <button key={name||"none"} role="menuitemradio" aria-checked={value===name} className="btn pop-row" onClick={()=>onPick(name)}>
       {name?<span className={"tag c-"+(NOTION_COLORS.includes(color)?color:"default")}>{name}</span>:<span>{label}</span>}
       <span className="pop-check" aria-hidden="true">{value===name?"✓":""}</span>
     </button>);
-  return(<>
-    <div className="pop-scrim" onClick={onClose}/>
-    <div role="menu" aria-label="우선순위" className="pop fade" style={style}>
+  return(
+    <Popover rect={rect} rows={options.length+1} label="우선순위" onClose={onClose}>
       {options.map(o=>row(o.name,o.color))}
       {row("",null,"없음")}
-    </div>
-  </>);
+    </Popover>);
 }
 
 /* ── 하루 평가 ── 접힌 상태: 한 줄 / 펼친 상태: 별 5개 + '레슨런 쓰기' + 제출하기 */
@@ -1585,6 +1620,9 @@ const CSS=`
     border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.18)}
   .btn.pop-row{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;min-height:44px;padding:0 16px;font-size:17px;color:var(--label)}
   .btn.pop-row:active{background:var(--fill2)}
+  .btn.pop-row.danger{color:var(--red)}
+  .btn.pop-row+.btn.pop-row.danger{box-shadow:inset 0 .5px 0 var(--sep)}
+  .btn.more{flex:0 0 auto;color:var(--label3);width:30px;height:30px;display:flex;align-items:center;justify-content:center;margin-right:-6px}
   .pop-check{color:var(--blue);font-weight:600;width:14px}
   .sum-ok{align-self:center;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--green);margin-left:6px}
   .seg{display:flex;gap:4px;margin-top:14px}
