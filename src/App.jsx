@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { extractTags, suggestTriesByRules } from "../api/_keywords.js";
+import { extractTags, suggestTriesByRules, splitLines, reportByRules } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
-   업무 회고 — 개인 업무 루틴 트래커
+   FrogBox — 개구리(핵심 과업)를 먼저 먹는 개인 업무 회고
    할 일(업무 루틴)마다 주간 목표 횟수를 두고, 날짜별로 체크합니다.
    [오늘] 탭: 오늘 할 일(노션 과업 DB, 마감일 = 그날) · 매일 루틴 체크 · 하루 평가
    [회고] 탭: 루틴·할 일·하루 평점 이번 주 요약 (누르면 자세히)
@@ -389,7 +389,8 @@ export default function App(){
     }
     return suggestTriesByRules(problems,tries);
   };
-  const [editorDate,setEditorDate]=useState(null);   // 레슨런 작성 화면을 연 날짜 (null = 닫힘)
+  const [editorDate,setEditorDate]=useState(null);
+  const [reportWeek,setReportWeek]=useState(null);   // 주간 리포트를 연 주의 월요일 (null = 닫힘)   // 레슨런 작성 화면을 연 날짜 (null = 닫힘)
   /* 하루 평점 — 같은 별을 다시 누르면 지움(0) */
   /* 오늘 할 일 추가·수정 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
   const addTask=async(title,priority="")=>{
@@ -611,6 +612,20 @@ export default function App(){
   const weekTaskList=allTasks.filter(t=>t.date>=toISO(curMon)&&t.date<=rangeTo);
   const wkStat=taskStats(weekTaskList);
 
+  /* 주간 리포트 — 금·토·일엔 이번 주, 월~목엔 지난주 */
+  const reportMon=toISO([5,6,0].includes(fromISO(today).getDay())?curMon:addDays(curMon,-7));
+  const weekReportData=(mon)=>{
+    const ds=weekDatesFrom(fromISO(mon)), fri=ds[4];
+    const ls=lessons.filter(l=>l.date>=mon&&l.date<=fri).sort((a,b)=>a.date<b.date?-1:1);
+    const core=taskStats(allTasks.filter(t=>t.date>=mon&&t.date<=fri)).core;
+    const rs=ds.map(d=>ratings[d]).filter(Boolean);
+    const wk=weekOfMonth(mon);
+    return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,
+      tries:ls.reduce((n,l)=>n+splitLines(l.try).length,0),core,
+      rating:rs.length?rs.reduce((a,b)=>a+b,0)/rs.length:null};
+  };
+  const reportHas=lessons.some(l=>l.try&&l.date>=reportMon&&l.date<=toISO(addDays(fromISO(reportMon),4)));
+
   return (
     <div className="app">
       <style>{CSS}</style>
@@ -698,6 +713,12 @@ export default function App(){
         {!booting&&tab==="lessons"&&(
           <div className="fade">
             {lessonNote&&<div className="banner">{lessonNote}</div>}
+            {lessonMode!=="loading"&&reportHas&&
+              <button className="btn rp-entry" onClick={()=>setReportWeek(reportMon)}>
+                <span className="rp-entry-k">주간 리포트</span>
+                <span className="rp-entry-t">{weekReportData(reportMon).label} 해볼 것 돌아보기</span>
+                <span className="rp-entry-go" aria-hidden="true"><Chevron size={16}/></span>
+              </button>}
             {lessonMode==="loading"?<SkeletonList rows={4} tall/>
               :<LessonsList lessons={lessons} today={today} onOpen={setEditingLesson}/>}
           </div>
@@ -738,7 +759,11 @@ export default function App(){
         backLabel={subView==="routine"?"루틴":"회고"} onClose={goBack}/>}
       {editorDate&&<LessonEditor dateLabel={`${fromISO(editorDate).getMonth()+1}월 ${fromISO(editorDate).getDate()}일 ${wdOf(editorDate)}요일`}
         draft={draftOf(editorDate)} setDraft={(v)=>setDraftFor(editorDate,v)} suggest={suggestTries} onClose={()=>setEditorDate(null)}
-        onSave={async()=>{const n=await saveDraft(editorDate);setEditorDate(null);if(n)setToast("레슨런을 저장했어요");}}/>}
+        onSave={async()=>{const d=editorDate;const n=await saveDraft(d);setEditorDate(null);
+          /* 금요일 레슨런을 마치면 그 주 리포트를 바로 보여 줌 */
+          if(n&&fromISO(d).getDay()===5) setReportWeek(toISO(mondayOf(fromISO(d))));
+          else if(n) setToast("레슨런을 저장했어요");}}/>}
+      {reportWeek&&<WeeklyReport {...weekReportData(reportWeek)} mode={sync.mode} onClose={()=>setReportWeek(null)}/>}
       {editingLesson&&<LessonEditSheet lesson={editingLesson} suggest={suggestTries} onClose={()=>setEditingLesson(null)}
         onSave={async(text,tryText)=>{await editLesson(editingLesson.id,text,tryText);setEditingLesson(null);}}
         onDelete={()=>{delLesson(editingLesson.id);setEditingLesson(null);setToast("레슨런을 삭제했어요");}}/>}
@@ -1453,6 +1478,95 @@ function Lines({text}){
   return lines.map((l,i)=><div key={i}>{l}</div>);
 }
 
+/* ── 주간 리포트 — 그라데이션 위 네 장(스토리처럼). 오른쪽을 누르면 다음, 왼쪽은 이전 ──
+   1 이번 주 개구리  2 숫자로 본 한 주  3 해볼 것 테마(AI 또는 규칙)  4 다음 주엔 이것 하나만 */
+function useCountUp(target,on,ms=700){
+  const [v,setV]=useState(0);
+  useEffect(()=>{
+    if(!on){setV(0);return;}
+    if(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches){setV(target);return;}
+    let raf,t0;const step=(t)=>{t0??=t;const k=Math.min(1,(t-t0)/ms);setV(target*(1-Math.pow(1-k,3)));if(k<1)raf=requestAnimationFrame(step);};
+    raf=requestAnimationFrame(step);return()=>cancelAnimationFrame(raf);
+  },[target,on]);
+  return v;
+}
+function WeeklyReport({mon,label,lessons,tries,core,rating,mode,onClose}){
+  const [page,setPage]=useState(0);
+  const [rep,setRep]=useState(null);   // { themes, focus }
+  const N=4;
+  const key=`${mon}:${lessons.map(l=>l.id+(l.try||"").length).join(",")}`;
+  useEffect(()=>{
+    let alive=true;
+    try{const c=JSON.parse(LS.get("wr_reports")||"{}")[key];if(c){setRep(c);return;}}catch{}
+    const items=lessons.filter(l=>l.try).map(l=>({date:l.date,problem:l.text||"",try:l.try}));
+    const done=(r)=>{if(!alive)return;setRep(r);
+      try{const all=JSON.parse(LS.get("wr_reports")||"{}");all[key]=r;LS.set("wr_reports",JSON.stringify(all));}catch{}};
+    if(mode==="notion") api("/api/report",{method:"POST",body:JSON.stringify({week:label,lessons:items})})
+      .then(r=>done({themes:r.themes||[],focus:r.focus}),()=>done(reportByRules(items)));
+    else done(reportByRules(items));
+    return()=>{alive=false;};
+  },[key]);
+  useEffect(()=>{
+    const k=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}
+      if(e.key==="ArrowRight")setPage(p=>Math.min(N-1,p+1));if(e.key==="ArrowLeft")setPage(p=>Math.max(0,p-1));};
+    document.addEventListener("keydown",k,true);return()=>document.removeEventListener("keydown",k,true);
+  },[onClose]);
+  /* 열려 있는 동안 뒤 화면 스크롤과 스크롤바 자리(gutter)를 없애 그라데이션이 화면 끝까지 차게 */
+  useEffect(()=>{const h=document.documentElement.style,prev=[h.overflow,h.scrollbarGutter];
+    h.overflow="hidden";h.scrollbarGutter="auto";return()=>{h.overflow=prev[0];h.scrollbarGutter=prev[1];};},[]);
+  const tap=(e)=>{const r=e.currentTarget.getBoundingClientRect();
+    if(e.clientX-r.left<r.width*.3)setPage(p=>Math.max(0,p-1));else if(page<N-1)setPage(p=>p+1);};
+  const cLessons=useCountUp(lessons.length,page===1), cTries=useCountUp(tries,page===1), cRate=useCountUp(rating||0,page===1);
+  const st=(i)=>({animationDelay:`${120+i*110}ms`});
+  return(
+    <div role="dialog" aria-modal="true" aria-label={`${label} 주간 리포트`} className="rp">
+      <div className="rp-bg" aria-hidden="true"/>
+      <div className="rp-top">
+        <div className="rp-bars">{Array.from({length:N},(_,i)=><span key={i} className={i<page?"done":i===page?"on":undefined}/>)}</div>
+        <div className="rp-head"><span>FrogBox · {label}</span>
+          <button className="btn rp-x" aria-label="닫기" onClick={onClose}>
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2 2 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button></div>
+      </div>
+      <div className="rp-stage" onClick={tap} aria-live="polite">
+        {page===0&&<div key="p0" className="rp-page">
+          <p className="rp-k rp-in" style={st(0)}>이번 주 개구리</p>
+          <h2 className="rp-big rp-in" style={st(1)}>{core.total?<>{core.done}<small>/{core.total}개</small></>:"없었어요"}</h2>
+          {core.done>0&&<div className="rp-frogs">{Array.from({length:Math.min(core.done,20)},(_,i)=>
+            <span key={i} className="frog-pop" style={{animationDelay:`${300+i*70}ms`}}><Frog eaten size={44}/></span>)}</div>}
+          <p className="rp-sub rp-in" style={st(3)}>{core.total?(core.done===core.total?"핵심 과업을 다 먹었어요":`핵심 과업 ${core.total-core.done}개가 남았어요`):"이번 주엔 핵심 과업이 없었어요"}</p>
+        </div>}
+        {page===1&&<div key="p1" className="rp-page">
+          <p className="rp-k rp-in" style={st(0)}>숫자로 본 한 주</p>
+          <div className="rp-grid">
+            <div className="rp-tile rp-in" style={st(1)}><span className="rp-tk">레슨런</span><b className="num">{Math.round(cLessons)}</b></div>
+            <div className="rp-tile rp-in" style={st(2)}><span className="rp-tk">해볼 것</span><b className="num">{Math.round(cTries)}</b></div>
+            <div className="rp-tile rp-in" style={st(3)}><span className="rp-tk">하루 평점</span><b className="num">{rating==null?"–":cRate.toFixed(1)}</b></div>
+            <div className="rp-tile rp-in" style={st(4)}><span className="rp-tk">개구리</span><b className="num">{core.done}<small>/{core.total}</small></b></div>
+          </div>
+        </div>}
+        {page===2&&<div key="p2" className="rp-page">
+          <p className="rp-k rp-in" style={st(0)}>이번 주 해볼 것</p>
+          {!rep?<div className="rp-card rp-in" style={st(1)}><div className="sk rp-sk" style={{width:"40%"}}/><div className="sk rp-sk" style={{width:"85%",marginTop:12}}/><div className="sk rp-sk" style={{width:"70%",marginTop:8}}/></div>
+            :rep.themes.map((t,i)=>(
+              <div key={t.title} className="rp-card rp-in" style={st(i+1)}>
+                <div className="rp-ct">{t.title}<span className="num">{t.items.length}</span></div>
+                <ul className="lbullets">{t.items.map((x,j)=><li key={j}>{x}</li>)}</ul>
+              </div>))}
+        </div>}
+        {page===3&&<div key="p3" className="rp-page">
+          <p className="rp-k rp-in" style={st(0)}>다음 주엔 이것 하나만</p>
+          {rep?.focus?<>
+            <h2 className="rp-focus rp-in" style={st(1)}>{rep.focus.text}</h2>
+            <p className="rp-sub rp-in" style={st(2)}>{rep.focus.why}</p></>
+            :<div className="rp-card rp-in" style={st(1)}><div className="sk rp-sk" style={{width:"80%"}}/><div className="sk rp-sk" style={{width:"60%",marginTop:10}}/></div>}
+          <button className="btn rp-done rp-in" style={st(3)} onClick={(e)=>{e.stopPropagation();onClose();}}>좋아요</button>
+        </div>}
+      </div>
+      {page<N-1&&<p className="rp-hint" aria-hidden="true">누르면 다음</p>}
+    </div>
+  );
+}
+
 /* ── 레슨런 목록 ── 날짜별로 묶고(날짜는 그룹 머리에 한 번), 줄 = 상황/문제 + 해볼 것 한 줄. 누르면 편집 시트 */
 function LessonsList({lessons,today,onOpen}){
   const groups=[];
@@ -1491,6 +1605,9 @@ const CSS=`
     --gray4:#D1D1D6;--blue:#007AFF;--blue-rgb:0,122,255;--green:#34C759;--orange:#FF9500;--red:#FF3B30;--purple:#AF52DE;
     --bar:rgba(249,249,249,.86);--bar-top:rgba(242,242,247,.9);--bg-0:rgba(242,242,247,0);
     --glass:rgba(255,255,255,.72);--glass-edge:rgba(0,0,0,.06);--purple-rgb:175,82,222;--banner:#FFF4E0;--banner-ink:#9A5B00;
+    /* 주간 리포트 그라데이션 (건강 앱 요약 위쪽처럼 분홍·보라·하늘·민트) */
+    --rp-1:#FFB3C7;--rp-2:#D6B8FF;--rp-3:#A9D4FF;--rp-4:#B8F0DC;--rp-base:#F7F3FF;--rp-ink:#1C1433;--rp-ink2:rgba(28,20,51,.62);
+    --rp-glass:rgba(255,255,255,.55);--rp-edge:rgba(255,255,255,.7);
     color-scheme:light;
   }
   @media(prefers-color-scheme:dark){:root{
@@ -1499,6 +1616,8 @@ const CSS=`
     --gray4:#3A3A3C;--blue:#0A84FF;--blue-rgb:10,132,255;--green:#30D158;--orange:#FF9F0A;--red:#FF453A;--purple:#BF5AF2;
     --bar:rgba(22,22,24,.82);--bar-top:rgba(0,0,0,.86);--bg-0:rgba(0,0,0,0);
     --glass:rgba(44,44,46,.7);--glass-edge:rgba(255,255,255,.08);--purple-rgb:191,90,242;--banner:#2E2310;--banner-ink:#FFC56B;
+    --rp-1:#8A2E5C;--rp-2:#4B2C8F;--rp-3:#1F4E8C;--rp-4:#1D6B5A;--rp-base:#120E1F;--rp-ink:#FFFFFF;--rp-ink2:rgba(255,255,255,.7);
+    --rp-glass:rgba(255,255,255,.12);--rp-edge:rgba(255,255,255,.16);
     color-scheme:dark;
   }}
   *{box-sizing:border-box}
@@ -1634,6 +1753,49 @@ const CSS=`
   .frog.eaten .frog-eye{fill:#fff}
   .frog.eaten .frog-mouth{stroke:#fff}
   .frog-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+  .btn.rp-entry{position:relative;display:block;width:100%;text-align:left;margin-top:14px;padding:16px 44px 16px 20px;border-radius:26px;color:var(--rp-ink);overflow:hidden;
+    background:radial-gradient(120% 140% at 0% 0%,var(--rp-1) 0%,transparent 55%),radial-gradient(120% 140% at 100% 0%,var(--rp-3) 0%,transparent 60%),
+      radial-gradient(120% 140% at 50% 100%,var(--rp-2) 0%,transparent 65%),var(--rp-base)}
+  .btn.rp-entry:active{transform:scale(.985)}
+  .rp-entry-k{display:block;font-size:13px;font-weight:600;color:var(--rp-ink2)}
+  .rp-entry-t{display:block;font-size:17px;font-weight:600;margin-top:2px}
+  .rp-entry-go{position:absolute;right:18px;top:50%;transform:translateY(-50%);color:var(--rp-ink2)}
+  .rp{position:fixed;inset:0;z-index:95;color:var(--rp-ink);background:var(--rp-base);overflow:hidden;animation:rp-open .32s cubic-bezier(.2,.8,.2,1)}
+  .rp-bg{position:absolute;inset:-20%;background:radial-gradient(40% 35% at 20% 15%,var(--rp-1),transparent 70%),radial-gradient(45% 40% at 85% 20%,var(--rp-3),transparent 70%),
+    radial-gradient(50% 45% at 30% 80%,var(--rp-2),transparent 70%),radial-gradient(40% 35% at 85% 85%,var(--rp-4),transparent 70%);filter:blur(10px);animation:rp-drift 14s ease-in-out infinite alternate}
+  .rp-top{position:relative;max-width:600px;margin:0 auto;padding:calc(10px + env(safe-area-inset-top)) 16px 0}
+  .rp-bars{display:flex;gap:4px}
+  .rp-bars>span{flex:1;height:3px;border-radius:2px;background:var(--rp-glass);overflow:hidden;position:relative}
+  .rp-bars>span.done{background:var(--rp-ink)}
+  .rp-bars>span.on::after{content:"";position:absolute;inset:0;background:var(--rp-ink);transform-origin:left;animation:rp-bar .5s ease-out both}
+  .rp-head{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;font-weight:600;color:var(--rp-ink2)}
+  .btn.rp-x{width:32px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:var(--rp-ink);background:var(--rp-glass);box-shadow:inset 0 0 0 .5px var(--rp-edge)}
+  .rp-stage{position:relative;max-width:600px;margin:0 auto;height:calc(100% - 70px - env(safe-area-inset-top));padding:0 24px calc(40px + env(safe-area-inset-bottom));overflow-y:auto;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .rp-page{min-height:100%;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px 0}
+  .rp-in{animation:rp-in .5s cubic-bezier(.2,.8,.2,1) both}
+  .rp-k{margin:0;font-size:17px;font-weight:600;color:var(--rp-ink2)}
+  .rp-big{margin:0;font-family:ui-rounded,"SF Pro Rounded",-apple-system,"Pretendard",sans-serif;font-size:76px;font-weight:800;line-height:1;letter-spacing:-.02em}
+  .rp-big small{font-size:30px;font-weight:700;color:var(--rp-ink2);margin-left:4px}
+  .rp-sub{margin:0;font-size:17px;line-height:1.45;color:var(--rp-ink2)}
+  .rp-frogs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+  .rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .rp-tile,.rp-card{background:var(--rp-glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:inset 0 0 0 .5px var(--rp-edge);border-radius:22px}
+  .rp-tile{padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px}
+  .rp-tk{font-size:13px;font-weight:600;color:var(--rp-ink2)}
+  .rp-tile b{font-family:ui-rounded,"SF Pro Rounded",-apple-system,"Pretendard",sans-serif;font-size:40px;font-weight:800;line-height:1}
+  .rp-tile b small{font-size:20px;color:var(--rp-ink2)}
+  .rp-card{padding:16px 18px;font-size:16px;line-height:1.45}
+  .rp-card .lbullets li::before{color:var(--rp-ink2)}
+  .rp-ct{display:flex;justify-content:space-between;font-size:17px;font-weight:700;margin-bottom:8px}
+  .rp-ct .num{font-size:15px;color:var(--rp-ink2);font-weight:600}
+  .rp-sk{height:14px;background:var(--rp-glass)}
+  .rp-focus{margin:0;font-size:32px;font-weight:800;line-height:1.3;letter-spacing:-.01em;word-break:keep-all}
+  .btn.rp-done{align-self:flex-start;margin-top:12px;padding:14px 28px;border-radius:999px;font-size:17px;font-weight:700;color:var(--rp-base);background:var(--rp-ink)}
+  .rp-hint{position:absolute;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom));margin:0;text-align:center;font-size:12px;color:var(--rp-ink2);pointer-events:none}
+  @keyframes rp-open{from{opacity:0;transform:scale(1.04)}to{opacity:1;transform:none}}
+  @keyframes rp-in{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+  @keyframes rp-bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  @keyframes rp-drift{from{transform:translate3d(-3%,-2%,0) rotate(0deg)}to{transform:translate3d(3%,2%,0) rotate(8deg)}}
   .sum-stars{flex:0 0 auto;display:inline-flex;gap:2px;line-height:0;margin-bottom:4px}
   .sum-star{position:relative;display:inline-block}
   .sum-star path{fill:var(--gray4);stroke:none}
@@ -1699,5 +1861,5 @@ const CSS=`
   @keyframes fade{from{opacity:0}to{opacity:1}}
   .sheet.push{animation:push .28s cubic-bezier(.2,.8,.2,1)}
   @keyframes push{from{transform:translateX(24%);opacity:.6}}
-  @media(prefers-reduced-motion:reduce){.sheet.push{animation:none}.fade,.sk,.cbox.on svg,.frog-pop{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
+  @media(prefers-reduced-motion:reduce){.sheet.push{animation:none}.fade,.sk,.cbox.on svg,.frog-pop,.rp,.rp-bg,.rp-in,.rp-bars>span.on::after{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
 `;
