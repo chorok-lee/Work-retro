@@ -3,7 +3,8 @@
    GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  같은 모양, 마감일이 그 사이인 과업 (회고의 할 일 대시보드)
    POST   { title, date, priority? } →  { task }   (마감일 = date 로 새 과업, 우선순위는 노션 선택지 중 하나)
    GET 응답의 priorities: [{ name, color }] — 노션 우선순위 선택지(폐기 제외), 추가할 때 고르는 목록
-   PATCH  { id, done?, title?, priority? } →  { ok }  (완료 체크·이름·우선순위 수정, priority ""는 비움)
+   PATCH  { id, done?, title?, priority?, date? } →  { ok }  (완료·이름·우선순위·마감일 수정, priority ""는 비움)
+   DELETE { id }                  →  { ok }     (노션 페이지 보관 처리)
 
    앱과 노션 어느 쪽에서 바꿔도 같은 DB 행을 고치므로, 다시 불러오면 맞춰집니다.
    우선순위가 '폐기'인 과업은 보여주지 않습니다. */
@@ -100,12 +101,19 @@ export default async function handler(req, res) {
         if (b.priority === "") properties[P.pPriority] = { [P.pType]: null };
         else if (P.options.some((o) => o.name === b.priority)) properties[P.pPriority] = { [P.pType]: { name: b.priority } };
       }
-      if (!Object.keys(properties).length) return res.status(400).json({ error: "바꿀 값(done, title, priority)이 없습니다." });
+      if (isDate(b.date)) properties[P.pDue] = { date: { start: b.date } };
+      if (!Object.keys(properties).length) return res.status(400).json({ error: "바꿀 값(done, title, priority, date)이 없습니다." });
       await notion(`/pages/${b.id}`, { method: "PATCH", body: { properties } });
       return res.status(200).json({ ok: true });
     }
 
-    res.status(405).json({ error: "GET, POST, PATCH만 지원합니다." });
+    if (req.method === "DELETE") {
+      if (!b.id) return res.status(400).json({ error: "id가 필요합니다." });
+      await notion(`/pages/${b.id}`, { method: "PATCH", body: { archived: true } });
+      return res.status(200).json({ ok: true });
+    }
+
+    res.status(405).json({ error: "GET, POST, PATCH, DELETE만 지원합니다." });
   } catch (e) {
     fail(res, e);
   }
