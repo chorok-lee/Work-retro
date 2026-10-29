@@ -661,15 +661,15 @@ export default function App(){
         {!booting&&tab==="review"&&(
           <div className="fade summary">
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
-              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)}/>
+              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={thisWeek.indexOf(workToday)}/>
             <SummaryCard icon="flag" color="var(--red)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
               {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"핵심"}
                 : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
               bars={thisWeek.map(d=>{const ts=weekTaskList.filter(t=>t.date===d);return ts.length?ts.filter(t=>t.done).length:d>today?null:0;})}
-              max={Math.max(1,...thisWeek.map(d=>weekTaskList.filter(t=>t.date===d).length))}/>
+              max={Math.max(1,...thisWeek.map(d=>weekTaskList.filter(t=>t.date===d).length))} hi={thisWeek.indexOf(workToday)}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
-              value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" bars={weekRatings} max={5}/>
+              value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" stars={ratingAvg}/>
           </div>
         )}
 
@@ -743,7 +743,9 @@ function SubPage({title,onBack,children}){
 }
 
 /* ── 회고 요약 카드 (건강 앱 요약처럼) — 제목·시점 | 큰 값 + 작은 막대 ── */
-function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,quote,foot,loading,done}){
+/* bars: 이번 주 평일 값, hi: 오늘(최근 평일) 칸 — 그 칸만 카드 색, 나머지는 회색 (건강 앱처럼)
+   stars: 0~5 평균 — 막대 대신 별 다섯 개를 평균만큼 채움 */
+function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,stars,quote,foot,loading,done}){
   if(loading) return(
     <div className="btn sum-card" aria-busy="true" aria-label={`${title} 불러오는 중`}>
       <div className="sum-head"><span className="sum-title" style={{color}}><Icon name={icon} size={19}/>{title}</span></div>
@@ -771,8 +773,14 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,quo
         {bars&&
           <svg className="sum-bars" viewBox="0 0 96 56" width="96" height="56" aria-hidden="true">
             {bars.map((v,i)=>{const h=v==null?0:Math.max(4,52*v/max);
-              return <rect key={i} x={i*20+1} y={56-h} width="14" height={h} rx="2.5" fill="var(--gray4)"/>;})}
+              return <rect key={i} x={i*20+1} y={56-h} width="14" height={h} rx="2.5" fill={i===hi?color:"var(--gray4)"}/>;})}
           </svg>}
+        {stars!=null&&
+          <span className="sum-stars" role="img" aria-label={`별 5개 중 ${stars.toFixed(1)}개`}>
+            {[0,1,2,3,4].map(i=>{const f=Math.max(0,Math.min(1,stars-i));return(
+              <span key={i} className="sum-star"><StarSvg size={20}/>
+                {f>0&&<span className="sum-star-fill" style={{width:`${f*100}%`,color}}><StarSvg size={20}/></span>}</span>);})}
+          </span>}
       </div>
     </button>
   );
@@ -1552,6 +1560,11 @@ const CSS=`
   .btn.star.on path,.stars .on path{fill:var(--orange)}
   .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
+  .sum-stars{flex:0 0 auto;display:inline-flex;gap:2px;line-height:0;margin-bottom:4px}
+  .sum-star{position:relative;display:inline-block}
+  .sum-star path{fill:var(--gray4);stroke:none}
+  .sum-star-fill{position:absolute;inset:0 auto 0 0;overflow:hidden}
+  .sum-star-fill path{fill:currentColor}
 
   .ta{width:100%;resize:none;border:none;outline:none;background:transparent;font-size:17px;line-height:1.4;padding:0}
   .btn.filled:disabled{opacity:.35}
