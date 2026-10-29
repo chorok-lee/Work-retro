@@ -13,7 +13,14 @@ const THEMES = [
   ["협업", /협업|같이|함께|동료|팀원|팀|협의|조율|요청/],
   ["문서", /문서|기록|정리|작성|노트|위키|스펙|기획서|보고서/],
   ["학습", /학습|공부|배우|배운|아티클|책|강의|스터디/],
+  ["컨디션", /수면|취침|기상|늦잠|컨디션|피곤|운동|잠을|자서/],
 ];
+/* 주제 사전에 걸리는 첫 주제 (없으면 null) */
+const themeOf = (text) => {
+  const s = String(text || "");
+  const hits = THEMES.map(([tag, re]) => ({ tag, at: s.search(re) })).filter((h) => h.at >= 0).sort((a, b) => a.at - b.at);
+  return hits[0]?.tag || null;
+};
 
 const JOSA = ["에서는", "으로는", "에게서", "까지는", "이라는", "에서도", "에게는", "에서", "에게", "으로", "까지", "부터",
   "보다", "처럼", "하고", "이랑", "라는", "은", "는", "이", "가", "을", "를", "에", "의", "로", "와", "과", "도", "만", "랑"];
@@ -78,4 +85,27 @@ export function suggestTriesByRules(problems, tries) {
     out.push({ problem: i, text: rule[1] });
   });
   return out.slice(0, 3);
+}
+
+/* 규칙 기반 주간 리포트 — AI가 없거나 실패할 때. 해볼 것을 줄(불릿)마다 나눠 첫 주제 태그로 묶음 */
+const THEME_TITLE = { 회의: "회의 준비", 소통: "소통·공유", 우선순위: "우선순위 먼저", 집중: "집중 시간", 일정: "시간·일정",
+  피드백: "검토·피드백", 협업: "함께 일하기", 문서: "기록·문서", 학습: "배우기", 컨디션: "컨디션 관리", 기타: "그 밖의 시도" };
+export function reportByRules(lessons) {
+  const groups = new Map();
+  for (const l of lessons || []) {
+    for (const item of splitLines(l.try)) {
+      const tag = themeOf(item) || themeOf(l.problem) || "기타";
+      if (!groups.has(tag)) groups.set(tag, []);
+      groups.get(tag).push(item);
+    }
+  }
+  const themes = [...groups.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 4)
+    .map(([tag, items]) => ({ title: THEME_TITLE[tag] || tag, items: items.slice(0, 6) }));
+  const top = themes[0];
+  const focus = top
+    ? { text: top.items[0], why: top.items.length > 1 ? `이번 주 해볼 것 중 '${top.title}' 이야기가 ${top.items.length}번 나왔어요.` : "이번 주에 가장 먼저 적은 해볼 것이에요." }
+    : null;
+  return { themes, focus };
 }
