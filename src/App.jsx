@@ -4,9 +4,9 @@ import { extractTags, suggestTriesByRules } from "../api/_keywords.js";
 /* ────────────────────────────────────────────────────────────
    업무 회고 — 개인 업무 루틴 트래커
    할 일(업무 루틴)마다 주간 목표 횟수를 두고, 날짜별로 체크합니다.
-   [오늘] 탭: 오늘 할 일(노션 과업 DB, 마감일 = 그날) · 매일 루틴 체크 · 하루 평점
-   [레슨런] 탭: 그날 배운 점 한 줄
-   [회고] 탭: 지난주 대비 페이스, 이번 주 레슨런, 할 일별 기록
+   [오늘] 탭: 오늘 할 일(노션 과업 DB, 마감일 = 그날) · 매일 루틴 체크 · 하루 평가
+   [회고] 탭: 루틴·할 일·하루 평점 이번 주 요약 (누르면 자세히)
+   [레슨런] 탭: 상황/문제 + 해볼 것 모아 보기, 오른쪽 위 +로 쓰기
 ──────────────────────────────────────────────────────────── */
 
 /* 노션 연결 전(로컬 모드)에 쓰는 기본 항목 */
@@ -95,7 +95,8 @@ export default function App(){
   const [cache0]=useState(readCache);
   const [items,setItems]=useState(()=>cache0?cache0.res.items:[]);
   const [logs,setLogs]=useState(()=>cache0?cache0.logs:{});
-  const [tab,setTab]=useState("todo");
+  /* 예전 주소 #review/lessons(회고 안의 레슨런 화면)로 들어오면 레슨런 탭으로 */
+  const [tab,setTab]=useState(()=>/^#review\/lessons$/.test(window.location.hash||"")?"lessons":"todo");
   const [selDate,setSelDate]=useState(()=>lastWorkday(toISO(new Date())));
   const [loaded,setLoaded]=useState(!!cache0);
 
@@ -137,7 +138,7 @@ export default function App(){
 
   /* 화면 이동 — 회고 하위 화면 #review/<이름>, 루틴 상세 #item/<id>. 폰의 뒤로가기로 닫힘 */
   const parseHash=()=>{const h=window.location.hash||"";const a=h.match(/^#item\/(.+)$/),b=h.match(/^#review\/(\w+)$/);
-    return {item:a?decodeURIComponent(a[1]):null,sub:b?b[1]:null};};
+    return {item:a?decodeURIComponent(a[1]):null,sub:b&&b[1]!=="lessons"?b[1]:null};};
   const [detailId,setDetailId]=useState(()=>parseHash().item);
   const [subView,setSubView]=useState(()=>parseHash().sub);
   const pushed=useRef(0);   // 이 앱이 쌓은 기록 수 — 그만큼은 history.back()으로 닫음
@@ -147,6 +148,7 @@ export default function App(){
     window.addEventListener("popstate",on);return()=>window.removeEventListener("popstate",on);
   },[]);
   const base=()=>window.location.pathname+window.location.search;
+  useEffect(()=>{if(/^#review\/lessons$/.test(window.location.hash||""))window.history.replaceState(null,"",base());},[]);
   const openSub=(name)=>{window.history.pushState({s:1},"",`#review/${name}`);pushed.current++;setSubView(name);};
   const openDetail=(id)=>{window.history.pushState({d:1},"",`#item/${encodeURIComponent(id)}`);pushed.current++;setDetailId(id);};
   const goBack=()=>{
@@ -387,7 +389,7 @@ export default function App(){
     }
     return suggestTriesByRules(problems,tries);
   };
-  const [editorOpen,setEditorOpen]=useState(false);
+  const [editorDate,setEditorDate]=useState(null);   // 레슨런 작성 화면을 연 날짜 (null = 닫힘)
   /* 하루 평점 — 같은 별을 다시 누르면 지움(0) */
   /* 오늘 할 일 추가·수정 — 화면 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
   const addTask=async(title,priority="")=>{
@@ -528,7 +530,7 @@ export default function App(){
     <RatingCard key={selDate} score={ratings[selDate]||0} open={ratingOpen}
       lessonCount={lessons.filter(l=>l.date===selDate).length} draft={draftOf(selDate)}
       onToggle={()=>setRatingToggle(t=>({...t,[selDate]:!ratingOpen}))}
-      onWrite={()=>setEditorOpen(true)} onRate={(n)=>setRating(selDate,n)}/>
+      onWrite={()=>setEditorDate(selDate)} onRate={(n)=>setRating(selDate,n)}/>
   );
 
   /* 선택한 날짜 하루의 진행 */
@@ -545,16 +547,25 @@ export default function App(){
   /* 내비게이션 — iOS처럼 큰 제목 + 위쪽 막대(스크롤하면 작은 제목) + 아래 탭 막대 */
   const [scrolled,setScrolled]=useState(false);
   useEffect(()=>{const on=()=>setScrolled(window.scrollY>44);on();window.addEventListener("scroll",on,{passive:true});return()=>window.removeEventListener("scroll",on);},[]);
-  const title=tab==="todo"?(selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`):"회고";
+  const title=tab==="todo"?(selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`):tab==="lessons"?"레슨런":"회고";
   const fullDate=`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`;
   const curWk=weekOfMonth(toISO(curMon));
-  const subtitle=tab==="todo"?(selDate===today?fullDate:`${wdOf(selDate)}요일`):`${curWk.m}월 ${curWk.w}주차`;
+  const subtitle=tab==="todo"?(selDate===today?fullDate:`${wdOf(selDate)}요일`)
+    :tab==="lessons"?(lessonMode==="loading"?"\u00a0":`모두 ${lessons.length}개`):`${curWk.m}월 ${curWk.w}주차`;
   const dayNav=tab==="todo"&&(
     <div className="nav-actions">
       {selDate!==workToday&&<button className="btn txt" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘":"최근 평일"}</button>}
       <button className="btn nav-ico" aria-label="이전 평일" onClick={()=>setSelDate(prevWorkday(selDate))}><Chevron dir="l"/></button>
       <button className="btn nav-ico" aria-label="다음 평일" disabled={nextWorkday(selDate)>today}
         onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}><Chevron dir="r"/></button>
+    </div>
+  );
+  /* 레슨런 탭 — 새로 쓰기는 위쪽 막대 오른쪽 + (오늘, 주말이면 직전 평일 날짜로) */
+  const lessonNav=tab==="lessons"&&(
+    <div className="nav-actions">
+      <button className="btn nav-ico" aria-label="레슨런 쓰기" onClick={()=>setEditorDate(workToday)}>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+      </button>
     </div>
   );
   const dbLink=(id)=>id?`https://www.notion.so/${String(id).replace(/-/g,"")}`:"";
@@ -566,8 +577,6 @@ export default function App(){
   const weekRatings=thisWeek.map(d=>d>today?null:(ratings[d]||0));
   const rated=weekRatings.filter(v=>v);
   const ratingAvg=rated.length?(rated.reduce((a,b)=>a+b,0)/rated.length):null;
-  const latestLesson=[...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)[0];
-  const shortDate=(iso)=>iso===today?"오늘":`${fromISO(iso).getMonth()+1}월 ${fromISO(iso).getDate()}일`;
 
   /* 할 일 대시보드 — 4주치 과업에, 오늘 탭에서 불러온(더 최신인) 날짜별 목록을 덮어씀 */
   const rangeFrom=toISO(addDays(curMon,-21)), rangeTo=toISO(addDays(curMon,4));
@@ -588,7 +597,7 @@ export default function App(){
         <div className="navbar-in">
           <span/>
           <span className="nav-title" aria-hidden={!scrolled}>{title}</span>
-          <div style={{justifySelf:"end"}}>{dayNav}</div>
+          <div style={{justifySelf:"end"}}>{dayNav}{lessonNav}</div>
         </div>
       </header>
 
@@ -661,15 +670,20 @@ export default function App(){
               max={Math.max(1,...thisWeek.map(d=>weekTaskList.filter(t=>t.date===d).length))}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" bars={weekRatings} max={5}/>
-            <SummaryCard icon="bulb" color="var(--purple)" title="레슨런" meta={latestLesson?shortDate(latestLesson.date):""} onOpen={()=>openSub("lessons")}
-              empty={latestLesson?null:"아직 없어요"} quote={latestLesson?.text||latestLesson?.try}
-              loading={lessonMode==="loading"}/>
+          </div>
+        )}
+
+        {!booting&&tab==="lessons"&&(
+          <div className="fade">
+            {lessonNote&&<div className="banner">{lessonNote}</div>}
+            {lessonMode==="loading"?<SkeletonList rows={4} tall/>
+              :<LessonsList lessons={lessons} today={today} onOpen={setEditingLesson}/>}
           </div>
         )}
       </main>
 
       <nav className="tabbar" role="tablist" aria-label="화면">
-        {[["todo","오늘","check"],["review","회고","chart"]].map(([k,l,ic])=>(
+        {[["todo","오늘","check"],["review","회고","chart"],["lessons","레슨런","bulb"]].map(([k,l,ic])=>(
           <button key={k} role="tab" aria-selected={tab===k} className={"btn tab"+(tab===k?" on":"")}
             onClick={()=>{setTab(k);window.scrollTo({top:0});}}>
             <Icon name={ic} size={25}/><span>{l}</span>
@@ -698,17 +712,11 @@ export default function App(){
             <RatingTrend ratings={ratings} today={today}/>
             <RatingHistory ratings={ratings} today={today}/></>}
         </SubPage>}
-      {subView==="lessons"&&
-        <SubPage title="레슨런" onBack={goBack}>
-          {lessonNote&&<div className="banner">{lessonNote}</div>}
-          {lessonMode==="loading"?<SkeletonList rows={4} tall/>
-            :<LessonsList lessons={lessons} today={today} onOpen={setEditingLesson}/>}
-        </SubPage>}
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
         backLabel={subView==="routine"?"루틴":"회고"} onClose={goBack}/>}
-      {editorOpen&&<LessonEditor dateLabel={`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`}
-        draft={draftOf(selDate)} setDraft={(v)=>setDraftFor(selDate,v)} suggest={suggestTries} onClose={()=>setEditorOpen(false)}
-        onSave={async()=>{const date=selDate;const n=await saveDraft(date);setEditorOpen(false);if(n)setToast("레슨런을 저장했어요");}}/>}
+      {editorDate&&<LessonEditor dateLabel={`${fromISO(editorDate).getMonth()+1}월 ${fromISO(editorDate).getDate()}일 ${wdOf(editorDate)}요일`}
+        draft={draftOf(editorDate)} setDraft={(v)=>setDraftFor(editorDate,v)} suggest={suggestTries} onClose={()=>setEditorDate(null)}
+        onSave={async()=>{const n=await saveDraft(editorDate);setEditorDate(null);if(n)setToast("레슨런을 저장했어요");}}/>}
       {editingLesson&&<LessonEditSheet lesson={editingLesson} suggest={suggestTries} onClose={()=>setEditingLesson(null)}
         onSave={async(text,tryText)=>{await editLesson(editingLesson.id,text,tryText);setEditingLesson(null);}}
         onDelete={()=>{delLesson(editingLesson.id);setEditingLesson(null);setToast("레슨런을 삭제했어요");}}/>}
@@ -1381,7 +1389,7 @@ function LessonsList({lessons,today,onOpen}){
   for(const l of [...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)){
     let g=groups[groups.length-1]; if(!g||g.date!==l.date){g={date:l.date,items:[]};groups.push(g);} g.items.push(l);
   }
-  if(!groups.length) return <p className="group-foot" style={{marginTop:20}}>아직 레슨런이 없어요. 오늘 탭의 하루 평가하기에서 남길 수 있어요.</p>;
+  if(!groups.length) return <p className="group-foot" style={{marginTop:20}}>아직 레슨런이 없어요. 오른쪽 위 +로 남길 수 있어요.</p>;
   const label=(iso)=>{const x=fromISO(iso);return `${iso===today?"오늘 · ":""}${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
   return groups.map(g=>(
     <section key={g.date} className="group">
@@ -1551,7 +1559,7 @@ const CSS=`
   /* 아래 탭 막대 */
   /* 아래 탭 막대 — 홈 인디케이터 위에 떠 있는 유리 캡슐, 선택한 탭은 안쪽 알약으로 */
   .tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:max(14px,env(safe-area-inset-bottom));z-index:30;display:flex;gap:4px;padding:5px;
-    width:min(260px,calc(100% - 48px));border-radius:999px;background:var(--glass);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);
+    width:min(330px,calc(100% - 48px));border-radius:999px;background:var(--glass);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);
     box-shadow:0 8px 30px rgba(0,0,0,.12),inset 0 0 0 .5px var(--glass-edge)}
   .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--label);font-size:11px;font-weight:600;letter-spacing:0;padding:7px 0 6px;border-radius:999px;transition:background .2s,color .2s}
   .tab.on{color:var(--blue);background:var(--fill2)}
