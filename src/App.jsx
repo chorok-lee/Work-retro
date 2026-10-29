@@ -684,12 +684,12 @@ export default function App(){
           <div className="fade summary">
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={4}/>
-            <SummaryCard icon="flag" color="var(--red)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
-              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"핵심"}
+            {/* 핵심 과업 = 그날의 개구리. 개구리 먹기(가장 중요한 일을 먼저 끝내기) — 먹은 개구리는 초록으로 채움 */}
+            <SummaryCard icon="frog" color="var(--green)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
+              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개구리"}
                 : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
-              bars={recent5.map(d=>allTasks.filter(t=>t.date===d&&t.done).length)}
-              max={Math.max(1,...recent5.map(d=>allTasks.filter(t=>t.date===d).length))} hi={4}/>
+              frogs={wkStat.core.total?{eaten:wkStat.core.done,total:wkStat.core.total}:null}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" stars={ratingAvg}/>
           </div>
@@ -767,7 +767,7 @@ function SubPage({title,onBack,children}){
 /* ── 회고 요약 카드 (건강 앱 요약처럼) — 제목·시점 | 큰 값 + 작은 막대 ── */
 /* bars: 이번 주 평일 값, hi: 오늘(최근 평일) 칸 — 그 칸만 카드 색, 나머지는 회색 (건강 앱처럼)
    stars: 0~5 평균 — 막대 대신 별 다섯 개를 평균만큼 채움 */
-function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,stars,quote,foot,loading,done}){
+function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,stars,frogs,quote,foot,loading,done}){
   if(loading) return(
     <div className="btn sum-card" aria-busy="true" aria-label={`${title} 불러오는 중`}>
       <div className="sum-head"><span className="sum-title" style={{color}}><Icon name={icon} size={19}/>{title}</span></div>
@@ -797,6 +797,12 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,
             {bars.map((v,i)=>{const h=v==null?0:Math.max(6,52*v/max);
               return <rect key={i} x={i*20+1} y={56-h} width="14" height={h} rx="2.5" fill={i===hi?color:"var(--gray4)"}/>;})}
           </svg>}
+        {/* frogs: 이번 주 핵심 과업 한 마리씩, 먹은 것부터. 6마리 넘으면 5마리 + 나머지 수 */}
+        {frogs&&(()=>{const show=frogs.total>6?5:frogs.total;return(
+          <span className="sum-frogs" role="img" aria-label={`개구리 ${frogs.total}마리 중 ${frogs.eaten}마리 먹음`}>
+            {Array.from({length:show},(_,i)=><Frog key={i} eaten={i<frogs.eaten} size={18}/>)}
+            {frogs.total>show&&<span className="frog-more num">+{frogs.total-show}</span>}
+          </span>);})()}
         {stars!=null&&
           <span className="sum-stars" role="img" aria-label={`별 5개 중 ${stars.toFixed(1)}개`}>
             {[0,1,2,3,4].map(i=>{const f=Math.max(0,Math.min(1,stars-i));return(
@@ -857,12 +863,14 @@ function TaskDashboard({tasks,loading,today,curMon}){
   const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
   return(<>
     <div className="card">
-      <div className="card-head" style={{color:"var(--red)"}}><Icon name="flag" size={16}/>이번 주 핵심 과업</div>
+      <div className="card-head" style={{color:"var(--green)"}}><Icon name="frog" size={16}/>이번 주 개구리</div>
       {st.core.total
         ? <>
-            <div className="value"><span className="num">{allDone?"모두 달성":`${st.core.done}/${st.core.total}`}</span>
-              {!allDone&&<small>완료</small>}</div>
-            <div className="seg" aria-hidden="true">{Array.from({length:st.core.total},(_,i)=><span key={i} className={i<st.core.done?"on":undefined}/>)}</div>
+            <div className="value"><span className="num">{allDone?"다 먹었어요":`${st.core.done}/${st.core.total}`}</span>
+              {!allDone&&<small>먹음</small>}</div>
+            {/* 핵심 과업 하나 = 개구리 한 마리, 먹은(끝낸) 것부터 */}
+            <div className="frog-row" aria-hidden="true">
+              {Array.from({length:st.core.total},(_,i)=><Frog key={i} eaten={i<st.core.done} size={26}/>)}</div>
           </>
         : <div className="value"><span className="num">없어요</span></div>}
     </div>
@@ -907,7 +915,7 @@ function TaskDashboard({tasks,loading,today,curMon}){
               <div className="cell-title">{w.cur?"이번 주":`${wk.m}월 ${wk.w}주차`}</div>
               <div className="cell-sub">{w.st.total?`전체 ${w.st.total}개 중 ${w.st.done}개 완료`:"마감인 과업 없음"}</div>
             </div>
-            {c.total>0&&<span className={"cell-value num"+(ok?" met":"")}>핵심 {c.done}/{c.total}</span>}
+            {c.total>0&&<span className={"cell-value num"+(ok?" met":"")}>개구리 {c.done}/{c.total}</span>}
           </div></div>);})}
       </div>
     </section>
@@ -940,6 +948,7 @@ function Icon({name,size=22}){
   if(name==="chart") return <svg {...p}><path d="M5 20V12M10 20V5M15 20v-9M20 20V8"/></svg>;
   if(name==="flame") return <svg {...p}><path d="M12 21c3.9 0 6.5-2.7 6.5-6.4 0-3.3-2.3-5.6-3.8-7.6-.4 1.9-1.5 3-2.7 3.5.2-2.8-1-5.4-3.4-7.5-.3 3.5-4.1 6.2-4.1 11.6C4.5 18.3 7.6 21 12 21z"/></svg>;
   if(name==="flag") return <svg {...p}><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>;
+  if(name==="frog") return <svg {...p}><path d="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z"/><path d="M9 15c1.8 1 4.2 1 6 0"/></svg>;
   if(name==="star") return <svg {...p} fill="currentColor" stroke="none"><path d={STAR}/></svg>;
   return null;
 }
@@ -1367,6 +1376,15 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
     </div>
   );
 }
+/* 개구리 — 먹음(끝낸 핵심 과업) = 초록 채움 + 흰 눈·입, 남음 = 회색 선 */
+const FROG="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z";
+function Frog({eaten,size=20}){
+  return <svg className={"frog"+(eaten?" eaten":"")} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <path className="frog-body" d={FROG}/>
+    <circle className="frog-eye" cx="7.6" cy="7.5" r="1.1"/><circle className="frog-eye" cx="16.4" cy="7.5" r="1.1"/>
+    <path className="frog-mouth" d="M9 15c1.8 1 4.2 1 6 0"/>
+  </svg>;
+}
 const STAR="M12 2.8l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.6l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z";
 function StarSvg({size=20}){
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={STAR} strokeWidth="1.4" strokeLinejoin="round"/></svg>;
@@ -1589,6 +1607,15 @@ const CSS=`
   .btn.star.on path,.stars .on path{fill:var(--orange)}
   .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
+  .sum-frogs{flex:0 0 auto;display:inline-flex;align-items:center;gap:2px;margin-bottom:4px}
+  .frog-more{font-size:13px;color:var(--label2);margin-left:2px}
+  .frog .frog-body{fill:none;stroke:var(--gray3);stroke-width:1.6;stroke-linejoin:round}
+  .frog .frog-eye{fill:var(--gray3)}
+  .frog .frog-mouth{fill:none;stroke:var(--gray3);stroke-width:1.6;stroke-linecap:round}
+  .frog.eaten .frog-body{fill:var(--green);stroke:var(--green)}
+  .frog.eaten .frog-eye{fill:#fff}
+  .frog.eaten .frog-mouth{stroke:#fff}
+  .frog-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
   .sum-stars{flex:0 0 auto;display:inline-flex;gap:2px;line-height:0;margin-bottom:4px}
   .sum-star{position:relative;display:inline-block}
   .sum-star path{fill:var(--gray4);stroke:none}
@@ -1619,9 +1646,6 @@ const CSS=`
   .btn.more{flex:0 0 auto;color:var(--label3);width:30px;height:30px;display:flex;align-items:center;justify-content:center;margin-right:-6px}
   .pop-check{color:var(--blue);font-weight:600;width:14px}
   .sum-ok{align-self:center;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--green);margin-left:6px}
-  .seg{display:flex;gap:4px;margin-top:14px}
-  .seg>span{flex:1;height:8px;border-radius:4px;background:var(--fill)}
-  .seg>span.on{background:var(--red)}
   .pbar{flex:1;height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:0 4px}
   .pbar>span{display:block;height:100%;border-radius:3px;background:var(--blue)}
   .pbar>span.full{background:var(--green)}
