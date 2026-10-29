@@ -689,7 +689,7 @@ export default function App(){
               {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개"}
                 : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
-              frogs={wkStat.core.total?{eaten:wkStat.core.done,total:wkStat.core.total}:null}/>
+              frogs={wkStat.core.total?wkStat.core.done:null}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" stars={ratingAvg}/>
           </div>
@@ -797,12 +797,8 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,
             {bars.map((v,i)=>{const h=v==null?0:Math.max(6,52*v/max);
               return <rect key={i} x={i*20+1} y={56-h} width="14" height={h} rx="2.5" fill={i===hi?color:"var(--gray4)"}/>;})}
           </svg>}
-        {/* frogs: 이번 주 핵심 과업 한 마리씩, 먹은 것부터. 6마리 넘으면 5마리 + 나머지 수 */}
-        {frogs&&(()=>{const show=frogs.total>6?5:frogs.total;return(
-          <span className="sum-frogs" role="img" aria-label={`개구리 ${frogs.total}마리 중 ${frogs.eaten}마리 먹음`}>
-            {Array.from({length:show},(_,i)=><Frog key={i} eaten={i<frogs.eaten} size={18}/>)}
-            {frogs.total>show&&<span className="frog-more num">+{frogs.total-show}</span>}
-          </span>);})()}
+        {/* frogs: 이번 주 먹은 개구리 수 — 먹은 것만, 고정 영역 안에서 5마리마다 줄을 늘림 */}
+        {frogs!=null&&<FrogPile n={frogs}/>}
         {stars!=null&&
           <span className="sum-stars" role="img" aria-label={`별 5개 중 ${stars.toFixed(1)}개`}>
             {[0,1,2,3,4].map(i=>{const f=Math.max(0,Math.min(1,stars-i));return(
@@ -867,9 +863,9 @@ function TaskDashboard({tasks,loading,today,curMon}){
         ? <>
             <div className="value"><span className="num">{allDone?"다 먹었어요":`${st.core.done}/${st.core.total}`}</span>
               {!allDone&&<small>먹음</small>}</div>
-            {/* 핵심 과업 하나 = 개구리 한 마리, 먹은(끝낸) 것부터 */}
+            {/* 자세히 보기에선 남은 개구리(회색 선)도 함께 — 먹은 것부터 한 마리씩 좌르륵 */}
             <div className="frog-row" aria-hidden="true">
-              {Array.from({length:st.core.total},(_,i)=><Frog key={i} eaten={i<st.core.done} size={26}/>)}</div>
+              {Array.from({length:st.core.total},(_,i)=><span key={i} className="frog-pop" style={{animationDelay:`${i*45}ms`}}><Frog eaten={i<st.core.done} size={26}/></span>)}</div>
           </>
         : <div className="value"><span className="num">없어요</span></div>}
     </div>
@@ -1382,6 +1378,19 @@ function PrioTag({name,color,as,...rest}){
   const body=<>{core&&<Icon name="frog" size={12}/>}{name}</>;
   return as==="button"?<button className={cls} {...rest}>{body}</button>:<span className={cls} {...rest}>{body}</span>;
 }
+/* 먹은 개구리 더미 — 요약 카드의 그림 자리(96×56)는 그대로, 5마리마다 줄을 늘리고 개구리를 작게 (최대 4줄·20마리).
+   오른쪽 아래 기준, 한 마리씩 좌르륵 튀어나옴 */
+function FrogPile({n}){
+  const shown=Math.min(n,20), rows=Math.max(1,Math.ceil(shown/5)), size=[18,16,14,12][rows-1];
+  const lines=Array.from({length:rows},(_,r)=>Array.from({length:Math.min(5,shown-r*5)},(_,c)=>r*5+c));
+  return(
+    <span className="frog-pile" role="img" aria-label={`먹은 개구리 ${n}개`}>
+      {lines.map((ln,r)=>(
+        <span key={r} className="frog-line">
+          {ln.map(i=><span key={i} className="frog-pop" style={{animationDelay:`${i*45}ms`}}><Frog eaten size={size}/></span>)}
+        </span>))}
+    </span>);
+}
 /* 개구리 — 먹음(끝낸 핵심 과업) = 초록 채움 + 흰 눈·입, 남음 = 회색 선 */
 const FROG="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z";
 function Frog({eaten,size=20}){
@@ -1613,9 +1622,11 @@ const CSS=`
   .btn.star.on path,.stars .on path{fill:var(--orange)}
   .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
-  .sum-frogs{flex:0 0 auto;display:inline-flex;align-items:center;gap:2px;margin-bottom:4px}
+  .frog-pile{flex:0 0 auto;width:96px;height:56px;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-end;gap:2px}
+  .frog-line{display:flex;gap:2px;width:100%;justify-content:flex-start;padding-left:4px}
+  .frog-pop{display:inline-flex;animation:frog-pop .22s cubic-bezier(.3,1.5,.5,1) both}
+  @keyframes frog-pop{0%{opacity:0;transform:scale(.4)}70%{opacity:1;transform:scale(1.1)}100%{opacity:1;transform:scale(1)}}
   .frog-count{display:inline-flex;align-items:center;gap:4px}
-  .frog-more{font-size:13px;color:var(--label2);margin-left:2px}
   .frog .frog-body{fill:none;stroke:var(--gray3);stroke-width:1.6;stroke-linejoin:round}
   .frog .frog-eye{fill:var(--gray3)}
   .frog .frog-mouth{fill:none;stroke:var(--gray3);stroke-width:1.6;stroke-linecap:round}
@@ -1688,5 +1699,5 @@ const CSS=`
   @keyframes fade{from{opacity:0}to{opacity:1}}
   .sheet.push{animation:push .28s cubic-bezier(.2,.8,.2,1)}
   @keyframes push{from{transform:translateX(24%);opacity:.6}}
-  @media(prefers-reduced-motion:reduce){.sheet.push{animation:none}.fade,.sk,.cbox.on svg{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
+  @media(prefers-reduced-motion:reduce){.sheet.push{animation:none}.fade,.sk,.cbox.on svg,.frog-pop{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
 `;
