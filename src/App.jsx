@@ -1135,14 +1135,12 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
 function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onTomorrow,onDelete}){
   const [draft,setDraft]=useState("");
-  /* 새 할 일의 우선순위 — 기본 '낮음'(없으면 마지막 선택지). 태그를 눌러 팝오버에서 바꿈 */
+  /* 새 할 일은 우선순위 '낮음'(없으면 마지막 선택지)으로 저장 — 입력 줄엔 태그를 보이지 않고, 추가된 뒤 태그를 눌러 바꿈 */
   const defPrio=(priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
-  const [prio,setPrio]=useState(null);   // null = 기본값
-  const cur=prio??defPrio;
-  const [pop,setPop]=useState(null);     // { id: 과업 id 또는 "new", rect }
+  const [pop,setPop]=useState(null);     // { id: 과업 id, rect }
   const [more,setMore]=useState(null);   // ⋯ 메뉴 { t, rect }
   const [edit,setEdit]=useState(null);   // { id, text }
-  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,priorities.some(o=>o.name===cur)?cur:"");setDraft("");setPrio(null);};
+  const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,defPrio);setDraft("");};
   const openPop=(id,e)=>{e.stopPropagation();setPop({id,rect:e.currentTarget.getBoundingClientRect()});};
   const tagOf=(name,color,onClick,label)=>(
     <button className={"btn tag c-"+(NOTION_COLORS.includes(color)?color:"default")} aria-haspopup="menu" aria-label={label} onClick={onClick}>{name}</button>);
@@ -1194,9 +1192,6 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
             <input className="cell-input" value={draft} maxLength={200} placeholder="할 일 추가" enterKeyHint="done"
               aria-label="새 할 일" onChange={e=>setDraft(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
-            {priorities.length>0&&(cur
-              ? tagOf(cur,priorities.find(o=>o.name===cur)?.color,(e)=>openPop("new",e),`새 할 일 우선순위 ${cur}, 바꾸기`)
-              : <button className="btn prio-empty" aria-haspopup="menu" onClick={(e)=>openPop("new",e)}>우선순위</button>)}
           </div>
         </div>
       </div>
@@ -1205,11 +1200,10 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
         <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
       </Popover>}
       {pop&&<PrioPopover rect={pop.rect} options={priorities}
-        value={pop.id==="new"?cur:(tasks.find(t=>t.id===pop.id)?.priority||"")}
+        value={tasks.find(t=>t.id===pop.id)?.priority||""}
         onClose={()=>setPop(null)}
         onPick={(name)=>{const id=pop.id;setPop(null);
-          if(id==="new") setPrio(name);
-          else{const t=tasks.find(x=>x.id===id);if(t&&t.priority!==name)onPriority(t,name);}}}/>}
+          const t=tasks.find(x=>x.id===id);if(t&&t.priority!==name)onPriority(t,name);}}/>}
       {!loading&&tasks.length===0&&!err&&<p className="group-foot">이날 마감인 할 일이 없어요. 노션 과업 목록과 함께 맞춰져요.</p>}
     </section>
   );
