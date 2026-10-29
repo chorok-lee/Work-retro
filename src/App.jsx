@@ -686,7 +686,7 @@ export default function App(){
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={4}/>
             {/* 핵심 과업 = 그날의 개구리. 개구리 먹기(가장 중요한 일을 먼저 끝내기) — 먹은 개구리는 초록으로 채움 */}
             <SummaryCard icon="frog" color="var(--green)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
-              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개구리"}
+              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개"}
                 : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
               frogs={wkStat.core.total?{eaten:wkStat.core.done,total:wkStat.core.total}:null}/>
@@ -859,7 +859,6 @@ function TaskDashboard({tasks,loading,today,curMon}){
     .sort((a,b)=>(a.priority===b.priority?0:a.priority==="핵심"?-1:1)||(a.date<b.date?-1:a.date>b.date?1:0));
   const weeks=[3,2,1,0].map(i=>{const m=addDays(curMon,-7*i),a=toISO(m),b=toISO(addDays(m,4));
     return {a,cur:i===0,st:taskStats(tasks.filter(t=>t.date>=a&&t.date<=b))};}).reverse();
-  const tagCls=(c)=>"tag c-"+(NOTION_COLORS.includes(c)?c:"default");
   const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
   return(<>
     <div className="card">
@@ -881,7 +880,7 @@ function TaskDashboard({tasks,loading,today,curMon}){
         ? <div className="cells">
             {st.groups.map(g=>(
               <div key={g.name||"none"} className="cell"><div className="cell-body">
-                {g.name?<span className={tagCls(g.color)}>{g.name}</span>:<span className="cell-sub" style={{margin:0}}>우선순위 없음</span>}
+                {g.name?<PrioTag name={g.name} color={g.color}/>:<span className="cell-sub" style={{margin:0}}>우선순위 없음</span>}
                 <div className="pbar" aria-hidden="true"><span style={{width:`${g.done/g.total*100}%`}} className={g.done===g.total?"full":undefined}/></div>
                 <span className={"cell-value num"+(g.done===g.total?" met":"")} aria-label={`${g.name||"우선순위 없음"} ${g.total}개 중 ${g.done}개 완료`}>{g.done}/{g.total}</span>
               </div></div>))}
@@ -900,7 +899,7 @@ function TaskDashboard({tasks,loading,today,curMon}){
                   <div className="cell-title">{t.title}</div>
                   <div className="cell-sub" style={t.date<today?{color:"var(--red)"}:undefined}>{dLabel(t.date)}{t.date<today?" · 지남":""}</div>
                 </div>
-                <span className={tagCls(t.priorityColor)}>{t.priority}</span>
+                <PrioTag name={t.priority} color={t.priorityColor}/>
               </div>
             </a>))}
         </div>
@@ -915,7 +914,7 @@ function TaskDashboard({tasks,loading,today,curMon}){
               <div className="cell-title">{w.cur?"이번 주":`${wk.m}월 ${wk.w}주차`}</div>
               <div className="cell-sub">{w.st.total?`전체 ${w.st.total}개 중 ${w.st.done}개 완료`:"마감인 과업 없음"}</div>
             </div>
-            {c.total>0&&<span className={"cell-value num"+(ok?" met":"")}>개구리 {c.done}/{c.total}</span>}
+            {c.total>0&&<span className={"cell-value num frog-count"+(ok?" met":"")} aria-label={`개구리 ${c.total}개 중 ${c.done}개`}><Frog eaten={ok} size={16}/>{c.done}/{c.total}</span>}
           </div></div>);})}
       </div>
     </section>
@@ -1152,7 +1151,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
   const add=()=>{const t=draft.trim();if(!t)return;onAdd(t,defPrio);setDraft("");};
   const openPop=(id,e)=>{e.stopPropagation();setPop({id,rect:e.currentTarget.getBoundingClientRect()});};
   const tagOf=(name,color,onClick,label)=>(
-    <button className={"btn tag c-"+(NOTION_COLORS.includes(color)?color:"default")} aria-haspopup="menu" aria-label={label} onClick={onClick}>{name}</button>);
+    <PrioTag as="button" name={name} color={color} aria-haspopup="menu" aria-label={label} onClick={onClick}/>);
   const commit=()=>{
     if(!edit) return;
     const t=tasks.find(x=>x.id===edit.id), v=edit.text.trim();
@@ -1236,7 +1235,7 @@ function Popover({rect,rows,label,onClose,children}){
 function PrioPopover({rect,options,value,onPick,onClose}){
   const row=(name,color,label)=>(
     <button key={name||"none"} role="menuitemradio" aria-checked={value===name} className="btn pop-row" onClick={()=>onPick(name)}>
-      {name?<span className={"tag c-"+(NOTION_COLORS.includes(color)?color:"default")}>{name}</span>:<span>{label}</span>}
+      {name?<PrioTag name={name} color={color}/>:<span>{label}</span>}
       <span className="pop-check" aria-hidden="true">{value===name?"✓":""}</span>
     </button>);
   return(
@@ -1375,6 +1374,13 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
       </div>
     </div>
   );
+}
+/* 우선순위 태그 — 노션 색 그대로, '핵심'만 개구리 초록 + 개구리 아이콘 (핵심 과업 = 그날의 개구리) */
+function PrioTag({name,color,as,...rest}){
+  const core=name==="핵심";
+  const cls=(as==="button"?"btn ":"")+"tag c-"+(core?"green":NOTION_COLORS.includes(color)?color:"default");
+  const body=<>{core&&<Icon name="frog" size={12}/>}{name}</>;
+  return as==="button"?<button className={cls} {...rest}>{body}</button>:<span className={cls} {...rest}>{body}</span>;
 }
 /* 개구리 — 먹음(끝낸 핵심 과업) = 초록 채움 + 흰 눈·입, 남음 = 회색 선 */
 const FROG="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z";
@@ -1547,7 +1553,7 @@ const CSS=`
   .cell-input::placeholder,.ta::placeholder{color:var(--label3)}
   .btn.cell-title.edit{flex:1;text-align:left;cursor:text}
   /* 우선순위 태그 — 노션 선택지 색 팔레트 */
-  .tag{flex:0 0 auto;font-size:13px;line-height:1;padding:4px 7px;border-radius:5px;color:var(--t-ink);background:var(--t-bg);white-space:nowrap}
+  .tag{flex:0 0 auto;display:inline-flex;align-items:center;gap:3px;font-size:13px;line-height:1;padding:4px 7px;border-radius:5px;color:var(--t-ink);background:var(--t-bg);white-space:nowrap}
   .c-default{--t-bg:rgba(84,72,49,.08);--t-ink:#32302C}.c-gray{--t-bg:#F1F1EF;--t-ink:#787774}.c-brown{--t-bg:#F4EEEE;--t-ink:#976D57}
   .c-orange{--t-bg:#FBECDD;--t-ink:#CC782F}.c-yellow{--t-bg:#FBF3DB;--t-ink:#C29343}.c-green{--t-bg:#EDF3EC;--t-ink:#548164}
   .c-blue{--t-bg:#E7F3F8;--t-ink:#337EA9}.c-purple{--t-bg:#F7F3F8;--t-ink:#9065B0}.c-pink{--t-bg:#FBF2F5;--t-ink:#C14C8A}.c-red{--t-bg:#FDEBEC;--t-ink:#C4554D}
@@ -1608,6 +1614,7 @@ const CSS=`
   .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
   .sum-frogs{flex:0 0 auto;display:inline-flex;align-items:center;gap:2px;margin-bottom:4px}
+  .frog-count{display:inline-flex;align-items:center;gap:4px}
   .frog-more{font-size:13px;color:var(--label2);margin-left:2px}
   .frog .frog-body{fill:none;stroke:var(--gray3);stroke-width:1.6;stroke-linejoin:round}
   .frog .frog-eye{fill:var(--gray3)}
