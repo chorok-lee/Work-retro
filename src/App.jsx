@@ -11,18 +11,18 @@ import { extractTags, suggestTriesByRules, splitLines, reportByRules } from "../
 
 /* 노션 연결 전(로컬 모드)에 쓰는 기본 항목 */
 const DEFAULT_ITEMS = [
-  { id:"log",   name:"업무 일지 작성",      kind:"weekly", target:5 },
-  { id:"plan",  name:"하루 우선순위 정리",  kind:"weekly", target:5 },
-  { id:"deep",  name:"딥워크 2시간",        kind:"weekly", target:3 },
-  { id:"learn", name:"학습 · 아티클 정리",  kind:"weekly", target:2 },
-  { id:"retro", name:"주간 회고 작성",      kind:"weekly", target:1 },
+  { id:"log",   name:"업무 일지 작성",      kind:"weekday" },
+  { id:"plan",  name:"하루 우선순위 정리",  kind:"weekday" },
+  { id:"read",  name:"책 30분 읽기",        kind:"daily" },
+  { id:"rest",  name:"한 주 돌아보기",      kind:"weekend" },
 ];
 
-/* 한 주 = 평일 5일. 매일 = 주 5회, 주 6~7회로 적힌 것도 5회로 봅니다 */
-const WORKDAYS=5;
-const tgtOf = (h) => h.kind==="daily" ? WORKDAYS : Math.min(WORKDAYS,h.target);
-const freqLabel = (h) => tgtOf(h)>=WORKDAYS ? "매일" : `주 ${tgtOf(h)}회`;
-/* 매일 → 주 1회 순으로, 같은 주기면 가나다순 */
+/* 한 주 = 월~일 7일. 루틴 목표일은 평일(월~금) · 주말(토·일) · 매일 셋 중 하나 (예전 '주 N회'는 평일로 봄) */
+const WEEK=7;
+const schedOf = (h) => h.kind==="daily"||h.kind==="weekend" ? h.kind : "weekday";
+const tgtOf = (h) => ({daily:7,weekday:5,weekend:2})[schedOf(h)];
+const freqLabel = (h) => ({daily:"매일",weekday:"평일",weekend:"주말"})[schedOf(h)];
+/* 매일 → 평일 → 주말 순으로, 같은 주기면 가나다순 */
 const sortItems = (list) => [...(list||[])].sort((a,b)=>{
   const ta=tgtOf(a), tb=tgtOf(b);
   if(ta!==tb) return tb-ta;
@@ -33,16 +33,16 @@ const toISO=(d)=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0
 const fromISO=(s)=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);};
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
 const mondayOf=(d)=>{const x=new Date(d);x.setDate(x.getDate()-((x.getDay()+6)%7));return x;};
-/* 한 주의 평일(월~금) 날짜. 토·일 기록은 세지 않습니다 */
-const weekDatesFrom=(mon)=>Array.from({length:WORKDAYS},(_,i)=>toISO(addDays(mon,i)));
-const DAYS=["월","화","수","목","금"];
+/* 한 주(월~일) 날짜 */
+const weekDatesFrom=(mon)=>Array.from({length:WEEK},(_,i)=>toISO(addDays(mon,i)));
+const DAYS=["월","화","수","목","금","토","일"];
 const WD7=["월","화","수","목","금","토","일"];   // 날짜 표시용
 const wdOf=(iso)=>WD7[(fromISO(iso).getDay()+6)%7];
 const isWorkday=(iso)=>{const g=fromISO(iso).getDay();return g!==0&&g!==6;};
-/* 주말이면 앞뒤 평일로 */
-const prevWorkday=(iso)=>{let d=addDays(fromISO(iso),-1);while(!isWorkday(toISO(d)))d=addDays(d,-1);return toISO(d);};
-const nextWorkday=(iso)=>{let d=addDays(fromISO(iso),1);while(!isWorkday(toISO(d)))d=addDays(d,1);return toISO(d);};
-const lastWorkday=(iso)=>isWorkday(iso)?iso:prevWorkday(iso);
+/* 그 날짜가 이 루틴의 목표일인지 */
+const dueOn=(h,iso)=>{const s=schedOf(h);return s==="daily"||(s==="weekday")===isWorkday(iso);};
+const prevDay=(iso)=>toISO(addDays(fromISO(iso),-1));
+const nextDay=(iso)=>toISO(addDays(fromISO(iso),1));
 /* "10월 3주차" — 주가 두 달에 걸치면 목요일이 속한 달로 셉니다 */
 const weekOfMonth=(monISO)=>{const th=addDays(fromISO(monISO),3);return {m:th.getMonth()+1,w:Math.ceil(th.getDate()/7)};};
 /* 노션 시각(UTC) 또는 날짜 → 이 기기 기준 YYYY-MM-DD */
@@ -97,7 +97,7 @@ export default function App(){
   const [logs,setLogs]=useState(()=>cache0?cache0.logs:{});
   /* 예전 주소 #review/lessons(회고 안의 레슨런 화면)로 들어오면 레슨런 탭으로 */
   const [tab,setTab]=useState(()=>/^#review\/lessons$/.test(window.location.hash||"")?"lessons":"todo");
-  const [selDate,setSelDate]=useState(()=>lastWorkday(toISO(new Date())));
+  const [selDate,setSelDate]=useState(()=>toISO(new Date()));
   const [loaded,setLoaded]=useState(!!cache0);
 
   /* 노션 연결 상태: loading | notion | local */
@@ -255,7 +255,7 @@ export default function App(){
 
   const loadRangeTasks=async(mode=syncModeRef.current)=>{
     if(mode!=="notion") return;
-    const mon=mondayOf(new Date()), from=toISO(addDays(mon,-21)), to=toISO(addDays(mon,4));
+    const mon=mondayOf(new Date()), from=toISO(addDays(mon,-21)), to=toISO(addDays(mon,6));
     try{
       const r=await api(`/api/tasks?from=${from}&to=${to}`);
       setRangeTasks(Array.isArray(r?.tasks)?r.tasks:[]);
@@ -315,7 +315,7 @@ export default function App(){
   },[items,logs,lessons,lessonMode,ratings,ratingMode,loaded,sync.mode]);
 
   const today=toISO(new Date());
-  const workToday=lastWorkday(today);   // 주말엔 직전 금요일
+  const workToday=today;
   const selMon=mondayOf(fromISO(selDate)),weekStart=toISO(selMon);
   const weekDates=useMemo(()=>weekDatesFrom(selMon),[weekStart]);
   const isLogged=(id,d)=>(logs[d]||[]).includes(id);
@@ -433,7 +433,7 @@ export default function App(){
       setToast(e.message||"노션에 저장하지 못했어요.");
     }finally{ taskWriteAt.current=Date.now(); }
   };
-  const moveTaskTomorrow=(t)=>{const d=nextWorkday(selDate);
+  const moveTaskTomorrow=(t)=>{const d=nextDay(selDate);
     dropTask(t.id,{method:"PATCH",body:JSON.stringify({id:t.id,date:d})},"내일로 옮겼어요",d);};
   const deleteTask=(t)=>dropTask(t.id,{method:"DELETE",body:JSON.stringify({id:t.id})},"삭제했어요");
 
@@ -484,15 +484,15 @@ export default function App(){
   /* ── 페이스: 지난주 같은 요일까지 vs 이번 주 지금까지 ── */
   const paceOf=(list)=>{
     if(!list.length) return null;
-    const todayIdx=Math.min(WORKDAYS-1,(fromISO(today).getDay()+6)%7);   // 주말이면 금요일까지
+    const todayIdx=(fromISO(today).getDay()+6)%7;
     const dayCount=(iso)=>list.reduce((n,h)=>n+(isLogged(h.id,iso)?1:0),0);
     const cumul=(mon)=>{let c=0;return weekDatesFrom(mon).map(d=>(c+=dayCount(d)));};
     const cur=cumul(curMon), prev=cumul(addDays(curMon,-7));
     const now=cur[todayIdx], then=prev[todayIdx];
     const curWeek=weekDatesFrom(curMon);
     const left=(h)=>tgtOf(h)-curWeek.reduce((n,d)=>n+(isLogged(h.id,d)?1:0),0);
-    /* 이 속도면 채울 수 있는 목표 수 */
-    const onTrack=list.filter(h=>{const wc=tgtOf(h)-left(h);return wc/(todayIdx+1)*WORKDAYS>=tgtOf(h);}).length;
+    /* 오늘까지의 목표일을 다 채운(페이스대로 가는) 루틴 수 */
+    const onTrack=list.filter(h=>{const wc=tgtOf(h)-left(h);return wc>=curWeek.slice(0,todayIdx+1).filter(d=>dueOn(h,d)).length;}).length;
     /* 최고 기록 주 (불러온 1년 안, 이번 주 제외) */
     let best=0,bestMon=null;
     for(let i=1;i<=52;i++){
@@ -505,9 +505,9 @@ export default function App(){
 
   /* ── 항목 하나의 기록 통계 — 회고 목록·상세 페이지가 함께 씀 ──
      칸 상태: full(목표 채운 주의 체크) · part(못 채운 주의 체크) · empty · pre(시작 전) · future
-     연속: 매일 항목은 '일', 주 N회 항목은 '주' 단위 */
+     연속: 목표일(평일·주말·매일) 기준 '일' 단위 */
   const itemStats=(h)=>{
-    const t=tgtOf(h), daily=t>=WORKDAYS;
+    const t=tgtOf(h), daily=true;   // 목표일이 정해진 루틴이라 연속은 '일'(목표일 기준)
     const yearAgo=toISO(addDays(fromISO(today),-364));
     const startISO=startOf(h)||yearAgo;
     const weekCnt={};
@@ -515,15 +515,15 @@ export default function App(){
     const cell=(iso)=>{
       if(iso>today) return "future";
       if(iso<startISO) return "pre";
-      if(!isLogged(h.id,iso)) return "empty";
+      if(!isLogged(h.id,iso)) return dueOn(h,iso)?"empty":"off";   // 목표일이 아닌 날은 못 한 날로 보이지 않게
       return cntOf(mondayOf(fromISO(iso)))>=t?"full":"part";
     };
-    const days=[]; for(let d=fromISO(startISO>yearAgo?startISO:yearAgo);toISO(d)<=today;d=addDays(d,1)) if(isWorkday(toISO(d))) days.push(toISO(d));
+    const days=[]; for(let d=fromISO(startISO>yearAgo?startISO:yearAgo);toISO(d)<=today;d=addDays(d,1)) if(dueOn(h,toISO(d))) days.push(toISO(d));
     const logged=days.filter(d=>isLogged(h.id,d));
     let cur=0,best=0;
     if(daily){
       let run=0; for(const d of days){ run=isLogged(h.id,d)?run+1:0; best=Math.max(best,run); }
-      let i=days.length-1; if(i>=0&&days[i]===today&&!isLogged(h.id,days[i])) i--;   // 오늘 아직이면 직전 평일부터
+      let i=days.length-1; if(i>=0&&days[i]===today&&!isLogged(h.id,days[i])) i--;   // 오늘 아직이면 직전 목표일부터
       while(i>=0&&isLogged(h.id,days[i])){cur++;i--;}
     }else{
       const mons=[]; for(let m=mondayOf(fromISO(days[0]||today));toISO(m)<=today;m=addDays(m,7)) mons.push(m);
@@ -533,7 +533,7 @@ export default function App(){
     }
     const wc=cntOf(curMon);
     /* 최근 12주(이번 주 제외, 시작 이후) 중 목표를 채운 주 */
-    let ok=0,elig=0; for(let i=1;i<=12;i++){const m=addDays(curMon,-7*i); if(toISO(addDays(m,WORKDAYS-1))<startISO) continue; elig++; if(cntOf(m)>=t) ok++;}
+    let ok=0,elig=0; for(let i=1;i<=12;i++){const m=addDays(curMon,-7*i); if(toISO(addDays(m,6))<startISO) continue; elig++; if(cntOf(m)>=t) ok++;}
     return {h,t,daily,unit:daily?"일":"주",cell,cur,best,total:logged.length,startISO,
       wc,weekPct:Math.min(1,wc/t),ok,elig,rate:elig?ok/elig:null,
       records:[...logged].reverse(),todayOn:isLogged(h.id,today),started:startISO<=today};
@@ -553,7 +553,8 @@ export default function App(){
   );
 
   /* 선택한 날짜 하루의 진행 */
-  const dayDone=list.filter(h=>isLogged(h.id,selDate)).length;
+  const dayList=list.filter(h=>dueOn(h,selDate));   // 그날이 목표일인 루틴만 (주말엔 주말·매일 루틴)
+  const dayDone=dayList.filter(h=>isLogged(h.id,selDate)).length;
 
   const booting=!loaded||sync.mode==="loading";
   const notice = sync.mode==="local"
@@ -573,13 +574,13 @@ export default function App(){
     :tab==="lessons"?(lessonMode==="loading"?"\u00a0":`모두 ${lessons.length}개`):`${curWk.m}월 ${curWk.w}주차`;
   const dayNav=tab==="todo"&&(
     <div className="nav-actions">
-      {selDate!==workToday&&<button className="btn txt" onClick={()=>setSelDate(workToday)}>{workToday===today?"오늘":"최근 평일"}</button>}
-      <button className="btn nav-ico" aria-label="이전 평일" onClick={()=>setSelDate(prevWorkday(selDate))}><Chevron dir="l"/></button>
-      <button className="btn nav-ico" aria-label="다음 평일" disabled={nextWorkday(selDate)>today}
-        onClick={()=>{const n=nextWorkday(selDate);if(n<=today)setSelDate(n);}}><Chevron dir="r"/></button>
+      {selDate!==today&&<button className="btn txt" onClick={()=>setSelDate(today)}>오늘</button>}
+      <button className="btn nav-ico" aria-label="이전 날" onClick={()=>setSelDate(prevDay(selDate))}><Chevron dir="l"/></button>
+      <button className="btn nav-ico" aria-label="다음 날" disabled={nextDay(selDate)>today}
+        onClick={()=>{const n=nextDay(selDate);if(n<=today)setSelDate(n);}}><Chevron dir="r"/></button>
     </div>
   );
-  /* 레슨런 탭 — 새로 쓰기는 위쪽 막대 오른쪽 + (오늘, 주말이면 직전 평일 날짜로) */
+  /* 레슨런 탭 — 새로 쓰기는 위쪽 막대 오른쪽 + (오늘 날짜로) */
   const lessonNav=tab==="lessons"&&(
     <div className="nav-actions">
       <button className="btn nav-ico" aria-label="레슨런 쓰기" onClick={()=>setEditorDate(workToday)}>
@@ -592,16 +593,16 @@ export default function App(){
   /* 회고 요약 카드에 들어갈 이번 주 숫자 */
   const thisWeek=weekDatesFrom(curMon);
   const pace=paceOf(list);
-  /* 요약 막대 = 최근 평일 5일, 오늘(주말이면 직전 금요일)이 맨 오른쪽 — 건강 앱처럼 */
-  const recent5=[workToday];
-  while(recent5.length<5) recent5.unshift(prevWorkday(recent5[0]));
-  const dayChecks=recent5.map(d=>list.filter(h=>isLogged(h.id,d)).length);
+  /* 요약 막대 = 최근 7일, 오늘이 맨 오른쪽 — 건강 앱처럼 */
+  const recent7=[today];
+  while(recent7.length<7) recent7.unshift(prevDay(recent7[0]));
+  const dayChecks=recent7.map(d=>list.filter(h=>isLogged(h.id,d)).length);
   const weekRatings=thisWeek.map(d=>d>today?null:(ratings[d]||0));
   const rated=weekRatings.filter(v=>v);
   const ratingAvg=rated.length?(rated.reduce((a,b)=>a+b,0)/rated.length):null;
 
   /* 할 일 대시보드 — 4주치 과업에, 오늘 탭에서 불러온(더 최신인) 날짜별 목록을 덮어씀 */
-  const rangeFrom=toISO(addDays(curMon,-21)), rangeTo=toISO(addDays(curMon,4));
+  const rangeFrom=toISO(addDays(curMon,-21)), rangeTo=toISO(addDays(curMon,6));
   const allTasks=(()=>{
     const fresh=Object.entries(tasks).filter(([d])=>d>=rangeFrom&&d<=rangeTo);
     const freshDates=new Set(fresh.map(([d])=>d));
@@ -615,16 +616,16 @@ export default function App(){
   /* 주간 리포트 — 금·토·일엔 이번 주, 월~목엔 지난주 */
   const reportMon=toISO([5,6,0].includes(fromISO(today).getDay())?curMon:addDays(curMon,-7));
   const weekReportData=(mon)=>{
-    const ds=weekDatesFrom(fromISO(mon)), fri=ds[4];
-    const ls=lessons.filter(l=>l.date>=mon&&l.date<=fri).sort((a,b)=>a.date<b.date?-1:1);
-    const core=taskStats(allTasks.filter(t=>t.date>=mon&&t.date<=fri)).core;
+    const ds=weekDatesFrom(fromISO(mon)), sun=ds[6];
+    const ls=lessons.filter(l=>l.date>=mon&&l.date<=sun).sort((a,b)=>a.date<b.date?-1:1);
+    const core=taskStats(allTasks.filter(t=>t.date>=mon&&t.date<=sun)).core;
     const rs=ds.map(d=>ratings[d]).filter(Boolean);
     const wk=weekOfMonth(mon);
     return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,
       tries:ls.reduce((n,l)=>n+splitLines(l.try).length,0),core,
       rating:rs.length?rs.reduce((a,b)=>a+b,0)/rs.length:null};
   };
-  const reportHas=lessons.some(l=>l.try&&l.date>=reportMon&&l.date<=toISO(addDays(fromISO(reportMon),4)));
+  const reportHas=lessons.some(l=>l.try&&l.date>=reportMon&&l.date<=toISO(addDays(fromISO(reportMon),6)));
 
   return (
     <div className="app">
@@ -662,15 +663,16 @@ export default function App(){
             {list.length>0&&
               <section className="group">
                 <div className="group-head">
-                  <h2>매일 루틴</h2>
+                  <h2>루틴</h2>
                   <span className="group-side">
-                    <span className="num">{dayDone}/{list.length}</span>
+                    {dayList.length>0&&<span className="num">{dayDone}/{dayList.length}</span>}
                     {/* 루틴 추가·수정은 노션 DB에서 */}
                     {itemsDb&&<a className="btn txt" href={dbLink(itemsDb)} target="_blank" rel="noopener noreferrer">관리하기</a>}
                   </span>
                 </div>
                 <div className="cells">
-                  {list.map(h=>{
+                  {dayList.length===0&&<div className="cell"><div className="cell-body"><span className="cell-sub" style={{margin:0}}>오늘은 쉬는 날이에요</span></div></div>}
+                  {dayList.map(h=>{
                     const on=isLogged(h.id,selDate),wc=weekCount(h.id),t=tgtOf(h);
                     return(
                       <div key={h.id} className="cell tap" role="checkbox" aria-checked={on} tabIndex={0}
@@ -698,7 +700,7 @@ export default function App(){
         {!booting&&tab==="review"&&(
           <div className="fade summary">
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
-              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={4}/>
+              value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={6}/>
             {/* 핵심 과업 = 그날의 개구리. 개구리 먹기(가장 중요한 일을 먼저 끝내기) — 먹은 개구리는 초록으로 채움 */}
             <SummaryCard icon="frog" color="var(--green)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
               {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개"}
@@ -790,7 +792,7 @@ function SubPage({title,onBack,children}){
 }
 
 /* ── 회고 요약 카드 (건강 앱 요약처럼) — 제목·시점 | 큰 값 + 작은 막대 ── */
-/* bars: 이번 주 평일 값, hi: 오늘(최근 평일) 칸 — 그 칸만 카드 색, 나머지는 회색 (건강 앱처럼)
+/* bars: 최근 7일 값, hi: 오늘 칸 — 그 칸만 카드 색, 나머지는 회색 (건강 앱처럼)
    stars: 0~5 평균 — 막대 대신 별 다섯 개를 평균만큼 채움 */
 function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,stars,frogs,quote,foot,loading,done}){
   if(loading) return(
@@ -820,7 +822,8 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,
         {bars&&
           <svg className="sum-bars" viewBox="0 0 96 56" width="96" height="56" aria-hidden="true">
             {bars.map((v,i)=>{const h=v==null?0:Math.max(6,52*v/max);
-              return <rect key={i} x={i*20+1} y={56-h} width="14" height={h} rx="2.5" fill={i===hi?color:"var(--gray4)"}/>;})}
+              const step=96/bars.length, w=Math.min(14,step*.68);
+              return <rect key={i} x={i*step+(step-w)/2} y={56-h} width={w} height={h} rx="2.5" fill={i===hi?color:"var(--gray4)"}/>;})}
           </svg>}
         {/* frogs: 이번 주 먹은 개구리 수 — 먹은 것만, 고정 영역 안에서 5마리마다 줄을 늘림 */}
         {frogs!=null&&<FrogPile n={frogs}/>}
@@ -872,13 +875,13 @@ function taskStats(list){
 }
 function TaskDashboard({tasks,loading,today,curMon}){
   if(loading) return <SkeletonList card rows={4}/>;
-  const monISO=toISO(curMon), friISO=toISO(addDays(curMon,4));
+  const monISO=toISO(curMon), friISO=toISO(addDays(curMon,6));
   const week=tasks.filter(t=>t.date>=monISO&&t.date<=friISO);
   const st=taskStats(week);
   const allDone=st.core.total>0&&st.core.done===st.core.total;
   const left=week.filter(t=>!t.done&&(t.priority==="핵심"||t.priority==="높음"))
     .sort((a,b)=>(a.priority===b.priority?0:a.priority==="핵심"?-1:1)||(a.date<b.date?-1:a.date>b.date?1:0));
-  const weeks=[3,2,1,0].map(i=>{const m=addDays(curMon,-7*i),a=toISO(m),b=toISO(addDays(m,4));
+  const weeks=[3,2,1,0].map(i=>{const m=addDays(curMon,-7*i),a=toISO(m),b=toISO(addDays(m,6));
     return {a,cur:i===0,st:taskStats(tasks.filter(t=>t.date>=a&&t.date<=b))};}).reverse();
   const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
   return(<>
@@ -1038,7 +1041,7 @@ function PaceCard({p}){
 }
 
 /* ── 잔디 ── 세로 5칸(월~금) × N주 */
-const GRASS_BG={full:"var(--blue)",part:"rgba(var(--blue-rgb),.32)",empty:"var(--fill)",pre:"var(--fill2)",future:"transparent"};
+const GRASS_BG={full:"var(--blue)",part:"rgba(var(--blue-rgb),.32)",empty:"var(--fill)",pre:"var(--fill2)",off:"var(--fill2)",future:"transparent"};
 function Grass({cell,endISO,weeks,today,gap=3,radius=3}){
   const endMon=mondayOf(fromISO(endISO));
   const cols=Array.from({length:weeks},(_,i)=>addDays(endMon,-(weeks-1-i)*7));
@@ -1094,7 +1097,7 @@ const PAGE_WEEKS=22;
 function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
   const [page,setPage]=useState(0);
   const maxPage=Math.floor(52/PAGE_WEEKS);
-  const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+WORKDAYS-1));
+  const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+6));
   const startISO=toISO(addDays(fromISO(endISO),-(7*PAGE_WEEKS-1)));
   const md=(iso)=>{const d=fromISO(iso);return `${d.getFullYear()!==fromISO(today).getFullYear()?`${d.getFullYear()}년 `:""}${d.getMonth()+1}월 ${d.getDate()}일`;};
   useEffect(()=>{const esc=(e)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",esc);return()=>document.removeEventListener("keydown",esc);},[onClose]);
@@ -1434,21 +1437,21 @@ function Stars({n,size=13}){
     {[1,2,3,4,5].map(i=><span key={i} className={i<=n?"on":undefined}><StarSvg size={size}/></span>)}</span>;
 }
 
-/* ── 하루 평점 추이 ── 최근 4주 평일 막대 (높이 = 점수) + 이번 주 평균 */
+/* ── 하루 평점 추이 ── 최근 4주 매일 막대 (높이 = 점수) + 이번 주 평균 */
 function RatingTrend({ratings,today}){
   const curMon=mondayOf(fromISO(today));
   const weeks=[3,2,1,0].map(i=>weekDatesFrom(addDays(curMon,-7*i)));
   const avg=(ds)=>{const v=ds.map(d=>ratings[d]).filter(Boolean);return v.length?(v.reduce((a,b)=>a+b,0)/v.length):null;};
   const cur=avg(weeks[3]);
   const f=(v)=>v==null?"–":v.toFixed(1);
-  const W=560,H=72,G=18,BW=(W-G*3)/20-6;
+  const W=560,H=72,G=18,BW=(W-G*3)/28-4;
   return(
     <div className="card">
       <div className="card-head" style={{color:"var(--orange)"}}><Icon name="star" size={16}/>이번 주 평점</div>
       <div className="value"><span className="num">{f(cur)}</span>{cur!=null&&<small>점</small>}</div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{display:"block",marginTop:14}} aria-hidden="true">
         {weeks.map((ds,wi)=>ds.map((d,di)=>{
-          const x=wi*((W-G*3)/4+G)+di*((W-G*3)/20)+3, v=ratings[d]||0, h=v?Math.max(5,(H-2)*v/5):4;
+          const x=wi*((W-G*3)/4+G)+di*((W-G*3)/28)+2, v=ratings[d]||0, h=v?Math.max(5,(H-2)*v/5):4;
           return <rect key={d} x={x} y={H-h} width={BW} height={h} rx="3"
             fill={d>today?"transparent":v?"var(--orange)":"var(--fill)"}><title>{`${d} ${v?v+"점":"기록 없음"}`}</title></rect>;
         }))}

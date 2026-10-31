@@ -7,13 +7,12 @@
 
 import { CFG, queryAll, dbProps, byName, byType, readText, requireToken, fail } from "./_notion.js";
 
-/* "매일" → 주 7회 / "주3회" → 주 3회 */
+/* 목표 빈도: "평일"(월~금, 주 5회) · "주말"(토·일, 주 2회) · "매일"(주 7회). 그 밖의 값(예전 '주N회' 등)은 평일로 봄 */
 export function parseFreq(label) {
   const s = String(label || "").trim();
   if (/매일|daily/i.test(s)) return { kind: "daily", target: 7 };
-  const m = s.match(/(\d+)\s*회/) || s.match(/^\s*(\d+)\s*$/);
-  if (m) return { kind: "weekly", target: Math.max(1, Math.min(7, Number(m[1]))) };
-  return { kind: "daily", target: 7 };
+  if (/주말|weekend/i.test(s)) return { kind: "weekend", target: 2 };
+  return { kind: "weekday", target: 5 };
 }
 
 const plain = (rich) => (rich || []).map((t) => t.plain_text).join("").trim();
