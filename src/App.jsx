@@ -725,7 +725,7 @@ export default function App(){
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}
               onTomorrow={moveTaskTomorrow} onDelete={deleteTask}
               onDuplicate={(t)=>{addTask(t.title,t.priority||"");setToast("복제했어요");}}
-              isToday={selDate===today} onMoveUndone={moveUndone}/>
+              onMoveUndone={moveUndone}/>
 
             {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
             {list.length>0&&
@@ -1313,7 +1313,7 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onD
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone,isToday=true}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone}){
   const [manage,setManage]=useState(null);   // 관리하기 메뉴 위치
   const undone=tasks.filter(t=>!t.done&&t.priority!=="핵심");   // 핵심은 그날의 기록이라 옮기지 않음
   const [draft,setDraft]=useState("");
@@ -1382,7 +1382,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
       {manage&&<Popover rect={manage} rows={dbUrl?2:1} label="할 일 관리" onClose={()=>setManage(null)}>
         {dbUrl&&<a role="menuitem" className="btn pop-row" href={dbUrl} target="_blank" rel="noopener noreferrer" onClick={()=>setManage(null)}>노션 이동하기</a>}
         <button role="menuitem" className="btn pop-row" disabled={!undone.length} onClick={()=>{setManage(null);onMoveUndone(undone);}}>
-          <span>{isToday?"오늘 못 한 일 내일 하기":"못 한 일 다음 날 하기"}</span><span className="pop-count num">{undone.length||""}</span></button>
+          <span>못 한 일 미루기</span><span className="pop-count num">{undone.length||""}</span></button>
       </Popover>}
       {more&&<Popover rect={more.rect} rows={3} label="할 일 더보기" onClose={()=>setMore(null)}>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onDuplicate(t);}}>복제하기</button>
