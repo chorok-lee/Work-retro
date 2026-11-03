@@ -1461,29 +1461,58 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
 
 /* ── 우선순위 팝오버 — 태그 아래(화면 아래쪽이면 위)에 뜨는 선택 목록. 고르면 바로 반영 ──
    목록(.cells)이 잘라내지 않도록 화면 기준(fixed)으로 띄움 */
-function Popover({rect,rows,label,onClose,children}){
+function Popover({rect,rows,label,wide,onClose,children}){
   useEffect(()=>{
     const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};
     document.addEventListener("keydown",esc,true); window.addEventListener("scroll",onClose,{passive:true});
     return()=>{document.removeEventListener("keydown",esc,true);window.removeEventListener("scroll",onClose);};
   },[onClose]);
-  const H=rows*44+12, below=rect.bottom+8+H<window.innerHeight;
-  const style={right:Math.max(12,window.innerWidth-rect.right),...(below?{top:rect.bottom+8}:{bottom:window.innerHeight-rect.top+8})};
+  /* 그린 뒤 화면 좌우 끝(12px 안쪽)을 벗어나면 그만큼 안으로 당김 (스크롤바 자리 등으로 계산이 어긋날 때) */
+  const el=useRef(null);
+  useLayoutEffect(()=>{const d=el.current;if(!d)return;const r=d.getBoundingClientRect(),cur=parseFloat(d.style.right)||0;
+    if(r.left<12) d.style.right=`${cur-(12-r.left)}px`; else if(r.right>window.innerWidth-12) d.style.right=`${cur+(r.right-window.innerWidth+12)}px`;});
+  /* 아래에 다 들어가면 아래, 아니면 공간이 넓은 쪽. 펼쳐져 길어지면(우선순위 기준 등) 그 안에서 스크롤 */
+  const vw=document.documentElement.clientWidth;   // 스크롤바 자리를 뺀 실제 폭 (fixed 기준)
+  const H=rows*44+12, W=wide?Math.min(300,vw-24):170;
+  const spaceBelow=window.innerHeight-rect.bottom-20, spaceAbove=rect.top-20;
+  const below=H<=spaceBelow||spaceBelow>=spaceAbove;
+  const style={right:Math.min(Math.max(12,vw-rect.right),vw-12-W),
+    ...(below?{top:rect.bottom+8}:{bottom:window.innerHeight-rect.top+8}),
+    maxHeight:below?spaceBelow:spaceAbove,...(wide?{width:W}:{})};
   return(<>
     <div className="pop-scrim" onClick={onClose}/>
-    <div role="menu" aria-label={label} className="pop fade" style={style}>{children}</div>
+    <div ref={el} role="menu" aria-label={label} className="pop fade" style={style}>{children}</div>
   </>);
 }
+/* 우선순위 기준 — "안 하면?"에 처음 '예'가 나오는 단계를 고름 (위에서부터) */
+const PRIO_GUIDE=[
+  {name:"핵심",line:"오늘 반드시 끝내야 하는 일 (작은 개구리)",ask:"오늘 야근하거나, 오늘 약속·마감이 깨져요"},
+  {name:"높음",line:"오늘 못 끝내면 내일이 막히는 일",ask:"내일 일정이 밀리거나, 누군가 기다려요"},
+  {name:"보통",line:"오늘 끝내면 좋은 일",ask:"조금 늦어질 뿐 큰 문제는 없어요"},
+  {name:"Backlog",line:"언젠가 해야 하는 일",ask:"아무 일도 없어요"},
+];
 function PrioPopover({rect,options,value,onPick,onClose}){
+  const [guide,setGuide]=useState(false);
   const row=(name,color,label)=>(
     <button key={name||"none"} role="menuitemradio" aria-checked={value===name} className="btn pop-row" onClick={()=>onPick(name)}>
       {name?<PrioTag name={name} color={color}/>:<span>{label}</span>}
       <span className="pop-check" aria-hidden="true">{value===name?"✓":""}</span>
     </button>);
   return(
-    <Popover rect={rect} rows={options.length+1} label="우선순위" onClose={onClose}>
+    <Popover rect={rect} rows={options.length+2+(guide?6:0)} wide={guide} label="우선순위" onClose={onClose}>
       {options.map(o=>row(o.name,o.color))}
       {row("",null,"없음")}
+      <button className="btn pop-guide-btn" aria-expanded={guide} onClick={(e)=>{const b=e.currentTarget;setGuide(v=>!v);
+        requestAnimationFrame(()=>b.parentElement?.scrollTo({top:b.offsetTop-8,behavior:"smooth"}));}}>우선순위 기준<Chevron size={12}/></button>
+      {guide&&<div className="pop-guide">
+        {PRIO_GUIDE.map(g=>{const o=options.find(x=>x.name===g.name||(g.name==="Backlog"&&x.name==="낮음"));return(
+          <div key={g.name} className="pg-row">
+            <PrioTag name={o?.name||g.name} color={o?.color}/>
+            <div className="pg-line">{g.line}</div>
+            <div className="pg-ask">안 하면? {g.ask}</div>
+          </div>);})}
+        <p className="pg-foot">위에서부터 '안 하면?'에 처음 해당하는 단계를 골라요. 핵심은 하루 1~2개가 좋아요.</p>
+      </div>}
     </Popover>);
 }
 
@@ -2159,6 +2188,16 @@ const CSS=`
   .btn.pop-row.danger{color:var(--red)}
   .btn.pop-row+.btn.pop-row.danger{box-shadow:inset 0 .5px 0 var(--sep)}
   .btn.more{flex:0 0 auto;color:var(--label3);width:30px;height:30px;display:flex;align-items:center;justify-content:center;margin-right:-6px}
+  .pop{overflow-y:auto;overscroll-behavior:contain}
+  .btn.pop-guide-btn{display:flex;align-items:center;gap:4px;width:100%;padding:10px 16px 8px;font-size:13px;color:var(--label2);box-shadow:inset 0 .5px 0 var(--sep)}
+  .btn.pop-guide-btn svg{transition:transform .2s}
+  .btn.pop-guide-btn[aria-expanded="true"] svg{transform:rotate(90deg)}
+  .pop-guide{padding:2px 16px 10px}
+  .pg-row{padding:8px 0}
+  .pg-row+.pg-row{border-top:.5px solid var(--sep)}
+  .pg-line{font-size:15px;margin-top:6px}
+  .pg-ask{font-size:13px;color:var(--label2);margin-top:2px}
+  .pg-foot{font-size:12px;color:var(--label2);margin:6px 0 0;line-height:1.4}
   .pop-check{color:var(--blue);font-weight:600;width:14px}
   .sum-ok{align-self:center;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--green);margin-left:6px}
   .pbar{flex:1;height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:0 4px}
