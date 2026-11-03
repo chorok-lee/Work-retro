@@ -1553,10 +1553,10 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
     </div>
   );
 }
-/* 우선순위 태그 — 핵심 초록·보통 회색·Backlog 선, 그 밖은 노션 색 (개구리 모양은 할 일 줄의 체크 자리에) */
+/* 우선순위 태그 — 핵심 초록·보통 회색·Backlog 옅은 회색, 그 밖은 노션 색 (개구리 모양은 할 일 줄의 체크 자리에) */
 function PrioTag({name,color,as,...rest}){
   const core=name==="핵심";
-  /* 핵심 = 초록, 보통 = 옅은 회색 채움, Backlog(예전 낮음) = 옅은 회색 선, 그 밖(높음 등) = 노션 색 */
+  /* 핵심 = 초록, 보통 = 회색 채움, Backlog(예전 낮음) = 더 옅은 회색 채움, 그 밖(높음 등) = 노션 색 */
   const look=core?"c-green":name==="보통"?"c-default":(name==="Backlog"||name==="낮음")?"line":"c-"+(NOTION_COLORS.includes(color)?color:"default");
   const cls=(as==="button"?"btn ":"")+"tag "+look;
   const body=name;
@@ -1956,7 +1956,7 @@ const CSS=`
   .frog-pond{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:104px}
   .pond-big{display:flex;gap:3px}
   .pond-small{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px;max-width:96px}
-  .tag.line{background:transparent;color:var(--label2);box-shadow:inset 0 0 0 1px var(--gray4)}
+  .tag.line{background:var(--fill2);color:var(--label2)}   /* Backlog: 보통보다 한 단계 옅은 회색 채움 */
   .task-frog{display:inline-flex;width:24px;height:24px;margin:0 -1px}
   .big-pile{flex:0 0 auto;display:flex;gap:4px;align-items:flex-end;margin-bottom:2px}
   .rp-big-row{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
