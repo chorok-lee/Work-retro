@@ -9,7 +9,7 @@
    '레슨런'(또는 lesson)인 것을 찾아 씁니다. */
 
 import { CFG, notion, queryAll, dbProps, findProp, byName, requireToken, fail } from "./_notion.js";
-import { extractTags } from "./_keywords.js";
+import { extractTags, splitBold, stripBold } from "./_keywords.js";
 
 let cached = null;
 async function lessonsDb() {
@@ -48,8 +48,9 @@ async function lessonsDb() {
 }
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
-const rich = (t) => [{ text: { content: t } }];
-const plain = (rich) => (rich || []).map((t) => t.plain_text).join("").trim();
+/* **굵게** ↔ 노션 bold 주석 */
+const rich = (t) => splitBold(t).map((s) => ({ text: { content: s.t }, ...(s.bold ? { annotations: { bold: true } } : {}) }));
+const plain = (rich) => (rich || []).map((t) => (t.annotations?.bold && t.plain_text.trim() ? `**${t.plain_text}**` : t.plain_text)).join("").trim();
 
 export default async function handler(req, res) {
   if (!requireToken(res)) return;
@@ -90,7 +91,7 @@ export default async function handler(req, res) {
       if (!items.length || !isDate(b.date)) return res.status(400).json({ error: "items(또는 text)와 date(YYYY-MM-DD)가 필요합니다." });
       const saved = [];
       for (const it of items) {   // 노션 초당 호출 제한을 넘지 않도록 차례로
-        const tags = extractTags(`${it.problem} ${it.try}`);
+        const tags = extractTags(stripBold(`${it.problem} ${it.try}`));
         const page = await notion("/pages", {
           method: "POST",
           body: {
@@ -112,7 +113,7 @@ export default async function handler(req, res) {
       const text = String(b.text || "").trim().slice(0, 1000);
       const tryText = String(b.try || "").trim().slice(0, 1000);
       if (!b.id || !(text || tryText)) return res.status(400).json({ error: "id와 text(또는 try)가 필요합니다." });
-      const tags = extractTags(`${text} ${tryText}`);
+      const tags = extractTags(stripBold(`${text} ${tryText}`));
       await notion(`/pages/${b.id}`, {
         method: "PATCH",
         body: { properties: {
