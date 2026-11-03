@@ -657,7 +657,8 @@ export default function App(){
                 patchTask(t.id,{priority:name,priorityColor:src.find(o=>o.name===name)?.color||""});}}
               dbUrl={isNotion?dbLink(tasksDb):""}
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}
-              onTomorrow={moveTaskTomorrow} onDelete={deleteTask}/>
+              onTomorrow={moveTaskTomorrow} onDelete={deleteTask}
+              onDuplicate={(t)=>{addTask(t.title,t.priority||"");setToast("복제했어요");}}/>
 
             {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
             {list.length>0&&
@@ -1165,7 +1166,7 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onTomorrow,onDelete}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete}){
   const [draft,setDraft]=useState("");
   /* 새 할 일은 우선순위 '낮음'(없으면 마지막 선택지)으로 저장 — 입력 줄엔 태그를 보이지 않고, 추가된 뒤 태그를 눌러 바꿈 */
   const defPrio=(priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
@@ -1209,7 +1210,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
                 : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
               {edit?.id!==t.id&&priorities.length>0&&(t.priority
                 ? tagOf(t.priority,t.priorityColor,(e)=>openPop(t.id,e),`우선순위 ${t.priority}, 바꾸기`)
-                : <button className="btn prio-empty" aria-haspopup="menu" onClick={(e)=>openPop(t.id,e)}>우선순위</button>)}
+                : null)}
               {edit?.id!==t.id&&
                 <button className="btn more" aria-label={`${t.title} 더보기`} aria-haspopup="menu"
                   onClick={(e)=>{e.stopPropagation();setMore({t,rect:e.currentTarget.getBoundingClientRect()});}}>
@@ -1227,7 +1228,11 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
           </div>
         </div>
       </div>
-      {more&&<Popover rect={more.rect} rows={2} label="할 일 더보기" onClose={()=>setMore(null)}>
+      {more&&<Popover rect={more.rect} rows={more.t.priority?3:4} label="할 일 더보기" onClose={()=>setMore(null)}>
+        {/* 우선순위가 비어 있으면 줄엔 아무것도 없고, 여기서 정함 */}
+        {!more.t.priority&&priorities.length>0&&
+          <button role="menuitem" className="btn pop-row" onClick={()=>{const {t,rect}=more;setMore(null);setPop({id:t.id,rect});}}>우선순위 정하기</button>}
+        <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onDuplicate(t);}}>복제하기</button>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onTomorrow(t);}}>내일 하기</button>
         <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
       </Popover>}
@@ -1818,7 +1823,6 @@ const CSS=`
 
   .sheet{position:fixed;inset:0;z-index:90;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:var(--bg)}
   .btn.tag{cursor:pointer}
-  .btn.prio-empty{flex:0 0 auto;font-size:13px;color:var(--label3)}
   .pop-scrim{position:fixed;inset:0;z-index:95}
   .pop{position:fixed;z-index:96;min-width:170px;padding:6px 0;background:var(--bar);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);
     border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.18)}
