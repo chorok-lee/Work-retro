@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { extractTags, suggestTriesByRules, splitLines, reportByRules } from "../api/_keywords.js";
+import { extractTags, suggestTriesByRules, splitLines, reportByRules, splitBold, stripBold } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
    FrogBox — 개구리(핵심 과업)를 먼저 먹는 개인 업무 회고
@@ -1210,7 +1210,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
                 : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
               {edit?.id!==t.id&&priorities.length>0&&(t.priority
                 ? tagOf(t.priority,t.priorityColor,(e)=>openPop(t.id,e),`우선순위 ${t.priority}, 바꾸기`)
-                : null)}
+                : <button className="btn prio-blank" aria-haspopup="menu" aria-label="우선순위 정하기" onClick={(e)=>openPop(t.id,e)}/>)}
               {edit?.id!==t.id&&
                 <button className="btn more" aria-label={`${t.title} 더보기`} aria-haspopup="menu"
                   onClick={(e)=>{e.stopPropagation();setMore({t,rect:e.currentTarget.getBoundingClientRect()});}}>
@@ -1228,10 +1228,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
           </div>
         </div>
       </div>
-      {more&&<Popover rect={more.rect} rows={more.t.priority?3:4} label="할 일 더보기" onClose={()=>setMore(null)}>
-        {/* 우선순위가 비어 있으면 줄엔 아무것도 없고, 여기서 정함 */}
-        {!more.t.priority&&priorities.length>0&&
-          <button role="menuitem" className="btn pop-row" onClick={()=>{const {t,rect}=more;setMore(null);setPop({id:t.id,rect});}}>우선순위 정하기</button>}
+      {more&&<Popover rect={more.rect} rows={3} label="할 일 더보기" onClose={()=>setMore(null)}>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onDuplicate(t);}}>복제하기</button>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onTomorrow(t);}}>내일 하기</button>
         <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
@@ -1337,14 +1334,12 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
   /* 뒤에 깔린 하위 화면까지 닫히지 않도록 먼저 받아서 멈춤 */
   useEffect(()=>{const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};document.addEventListener("keydown",esc,true);return()=>document.removeEventListener("keydown",esc,true);},[onClose]);
   useEffect(()=>{if(!focusId)return;const el=refs.current[focusId];if(el){el.focus();el.scrollIntoView?.({block:"center",behavior:"smooth"});}setFocusId(null);},[focusId]);
-  const grow=(el)=>{if(!el)return;el.style.height="auto";el.style.height=el.scrollHeight+"px";};
-  useEffect(()=>{Object.values(refs.current).forEach(grow);});
   const put=(next)=>setDraft({cards:next});
   const patch=(id,v)=>put(cards.map(c=>c.id===id?{...c,...v}:c));
   const add=()=>{const c=newCard();put([...cards,c]);setFocusId(c.id+"p");};
   const remove=(id)=>put(cards.filter(c=>c.id!==id));
   const ask=async(c)=>{
-    const p=c.p.trim();
+    const p=stripBold(c.p).trim();
     if(!p||c.t.trim()||asked.current[c.id]===p) return;
     asked.current[c.id]=p;
     const r=await suggest([p],[]).catch(()=>[]);
@@ -1373,19 +1368,17 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
                 <span className="lfield-label">상황/문제</span>
                 {!single&&(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
               </div>
-              <textarea ref={el=>{refs.current[c.id+"p"]=el;}} className="ta line" rows={1} value={c.p} maxLength={500}
-                placeholder="있었던 상황이나 문제를 구체적으로" aria-label={`상황/문제 ${i+1}`}
-                onChange={e=>patch(c.id,{p:e.target.value})} onBlur={()=>ask(c)}
-                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();setFocusId(c.id+"t");}}}/>
+              <RichField ref={el=>{refs.current[c.id+"p"]=el;}} value={c.p}
+                placeholder="있었던 상황이나 문제를 구체적으로" label={`상황/문제 ${i+1}`}
+                onChange={v=>patch(c.id,{p:v.slice(0,1000)})} onBlur={()=>ask(c)} onEnter={()=>setFocusId(c.id+"t")}/>
             </div>
             <div className="lfield">
               <div className="lfield-head"><span className="lfield-label">해볼 것</span></div>
-              <textarea ref={el=>{refs.current[c.id+"t"]=el;}} className="ta line" rows={1} value={c.t} maxLength={500}
-                placeholder={showSug?"직접 쓰거나 아래 제안을 넣어요":"다음에 바꿔 볼 행동"} aria-label={`해볼 것 ${i+1}`}
-                onChange={e=>patch(c.id,{t:e.target.value})}
-                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();
-                  if(single)return;
-                  if(i===cards.length-1){if(c.p.trim()||c.t.trim())add();}else setFocusId(cards[i+1].id+"p");}}}/>
+              <RichField ref={el=>{refs.current[c.id+"t"]=el;}} value={c.t}
+                placeholder={showSug?"직접 쓰거나 아래 제안을 넣어요":"다음에 바꿔 볼 행동"} label={`해볼 것 ${i+1}`}
+                onChange={v=>patch(c.id,{t:v.slice(0,1000)})}
+                onEnter={()=>{if(single)return;
+                  if(i===cards.length-1){if(c.p.trim()||c.t.trim())add();}else setFocusId(cards[i+1].id+"p");}}/>
               {showSug&&
                 <div className="lsug" role="group" aria-label="해볼 것 제안">
                   <div className="lsug-label">제안</div>
@@ -1479,12 +1472,50 @@ function LessonEditSheet({lesson,suggest,onClose,onSave,onDelete}){
 
 /* 여러 줄 글 — 불릿(- • * ·)·번호(1. 1))로 시작하는 줄이 2개 이상이면 불릿 목록으로, 아니면 줄바꿈만 살림 */
 const BULLET=/^\s*(?:[-•*·]|\d+[.)])\s+/;
+const Bold=({text})=>splitBold(text).map((s,i)=>s.bold?<strong key={i}>{s.t}</strong>:<React.Fragment key={i}>{s.t}</React.Fragment>);
 function Lines({text}){
   const lines=String(text||"").split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   if(lines.filter(l=>BULLET.test(l)).length>=2)
-    return <ul className="lbullets">{lines.map((l,i)=><li key={i}>{l.replace(BULLET,"")}</li>)}</ul>;
-  return lines.map((l,i)=><div key={i}>{l}</div>);
+    return <ul className="lbullets">{lines.map((l,i)=><li key={i}><Bold text={l.replace(BULLET,"")}/></li>)}</ul>;
+  return lines.map((l,i)=><div key={i}><Bold text={l}/></div>);
 }
+
+/* ── 굵게 쓸 수 있는 입력칸 — 글자를 고르고 ⌘B(Ctrl+B)로 굵게. 값은 **굵게** 표기로 주고받음 ──
+   붙여 넣기는 글자만, Enter는 onEnter(다음 칸), Shift+Enter는 줄바꿈 */
+const esc=(t)=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const mdToHtml=(md)=>String(md||"").split("\n").map(line=>splitBold(line).map(s=>s.bold?`<b>${esc(s.t)}</b>`:esc(s.t)).join("")).join("<br>");
+function htmlToMd(root){
+  let out="";
+  const walk=(n,bold)=>{
+    if(n.nodeType===3){const t=n.nodeValue.replace(/\u00a0/g," ");out+=bold&&t.trim()?`**${t}**`:t;return;}
+    if(n.nodeType!==1)return;
+    const tag=n.tagName, b=bold||tag==="B"||tag==="STRONG"||Number(n.style?.fontWeight)>=600;
+    if(tag==="BR"){out+="\n";return;}
+    if((tag==="DIV"||tag==="P")&&out&&!out.endsWith("\n"))out+="\n";
+    n.childNodes.forEach(c=>walk(c,b));
+  };
+  root.childNodes.forEach(c=>walk(c,false));
+  return out.replace(/\*\*\*\*/g,"").replace(/\n+$/,"");
+}
+const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnter,placeholder,label},ref){
+  const el=useRef(null), last=useRef(null);
+  React.useImperativeHandle(ref,()=>({focus:()=>{const d=el.current;if(!d)return;d.focus();
+    const r=document.createRange();r.selectNodeContents(d);r.collapse(false);const s=window.getSelection();s.removeAllRanges();s.addRange(r);},
+    scrollIntoView:(o)=>el.current?.scrollIntoView(o)}));
+  /* 밖에서 값이 바뀐 경우(제안 넣기 등)에만 내용을 다시 그림 — 입력 중엔 건드리지 않음 */
+  useEffect(()=>{if(el.current&&value!==last.current){el.current.innerHTML=mdToHtml(value);last.current=value;}},[value]);
+  const sync=()=>{const md=htmlToMd(el.current);last.current=md;onChange(md);};
+  return <div ref={el} className="ta line rich" contentEditable suppressContentEditableWarning role="textbox" aria-multiline="true"
+    aria-label={label} data-placeholder={placeholder} data-empty={!value?"1":undefined}
+    onInput={sync} onBlur={onBlur}
+    onPaste={e=>{e.preventDefault();document.execCommand("insertText",false,e.clipboardData.getData("text/plain"));}}
+    onKeyDown={e=>{
+      if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();document.execCommand("bold");sync();return;}
+      if((e.metaKey||e.ctrlKey)&&/^[iu]$/i.test(e.key)){e.preventDefault();return;}   // 기울임·밑줄은 쓰지 않음
+      if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();
+        if(e.shiftKey){document.execCommand("insertLineBreak");sync();}else onEnter?.();}
+    }}/>;
+});
 
 /* ── 주간 리포트 — 그라데이션 위 네 장(스토리처럼). 오른쪽을 누르면 다음, 왼쪽은 이전 ──
    1 이번 주 개구리  2 숫자로 본 한 주  3 해볼 것 테마(AI 또는 규칙)  4 다음 주엔 이것 하나만 */
@@ -1506,7 +1537,7 @@ function WeeklyReport({mon,label,lessons,tries,core,rating,mode,onClose}){
   useEffect(()=>{
     let alive=true;
     try{const c=JSON.parse(LS.get("wr_reports")||"{}")[key];if(c){setRep(c);return;}}catch{}
-    const items=lessons.filter(l=>l.try).map(l=>({date:l.date,problem:l.text||"",try:l.try}));
+    const items=lessons.filter(l=>l.try).map(l=>({date:l.date,problem:stripBold(l.text),try:stripBold(l.try)}));
     const done=(r)=>{if(!alive)return;setRep(r);
       try{const all=JSON.parse(LS.get("wr_reports")||"{}");all[key]=r;LS.set("wr_reports",JSON.stringify(all));}catch{}};
     if(mode==="notion") api("/api/report",{method:"POST",body:JSON.stringify({week:label,lessons:items})})
@@ -1828,6 +1859,8 @@ const CSS=`
     border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.18)}
   .btn.pop-row{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;min-height:44px;padding:0 16px;font-size:17px;color:var(--label)}
   .btn.pop-row:active{background:var(--fill2)}
+  .btn.prio-blank{flex:0 0 auto;width:40px;height:24px;border-radius:5px}   /* 우선순위가 없을 때: 글자 없이 같은 자리를 눌러 정함 */
+  .btn.prio-blank:active{background:var(--fill2)}
   .btn.pop-row.danger{color:var(--red)}
   .btn.pop-row+.btn.pop-row.danger{box-shadow:inset 0 .5px 0 var(--sep)}
   .btn.more{flex:0 0 auto;color:var(--label3);width:30px;height:30px;display:flex;align-items:center;justify-content:center;margin-right:-6px}
@@ -1836,6 +1869,9 @@ const CSS=`
   .pbar{flex:1;height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:0 4px}
   .pbar>span{display:block;height:100%;border-radius:3px;background:var(--blue)}
   .pbar>span.full{background:var(--green)}
+  .ta.rich{outline:none;white-space:pre-wrap;word-break:break-word;cursor:text;-webkit-user-modify:read-write}
+  .ta.rich[data-empty]::before{content:attr(data-placeholder);color:var(--label3);pointer-events:none}
+  .ta.rich b,.ta.rich strong,.lprob strong,.ltry strong{font-weight:700}
   .lcard{background:var(--cell);border-radius:26px;margin-top:12px;overflow:hidden}
   .lfield{padding:11px 18px 12px}
   .lfield+.lfield{border-top:.5px solid var(--sep);margin-left:18px;padding-left:0}

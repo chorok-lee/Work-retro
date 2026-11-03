@@ -7,7 +7,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { reportByRules } from "./_keywords.js";
+import { reportByRules, stripBold } from "./_keywords.js";
 
 const Report = z.object({
   themes: z.array(z.object({ title: z.string(), items: z.array(z.string()) })),
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
   const b = req.body && typeof req.body === "object" ? req.body : {};
   const s = (v, n) => String(v || "").trim().slice(0, n);
   const lessons = (Array.isArray(b.lessons) ? b.lessons : [])
-    .map((l) => ({ date: s(l?.date, 10), problem: s(l?.problem, 500), try: s(l?.try, 1000) }))
+    .map((l) => ({ date: s(l?.date, 10), problem: s(stripBold(l?.problem), 500), try: s(stripBold(l?.try), 1000) }))
     .filter((l) => l.try)
     .slice(0, 40);
   res.setHeader("Cache-Control", "no-store");

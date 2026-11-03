@@ -109,3 +109,15 @@ export function reportByRules(lessons) {
     : null;
   return { themes, focus };
 }
+
+/* 레슨런 굵게 — 글 안에서는 **굵게** 로 저장(노션에선 bold 주석으로 주고받음). 서버·앱 공용 */
+export function splitBold(text) {
+  const out = [];
+  String(text || "").split(/(\*\*[^*]+?\*\*)/).forEach((part) => {
+    if (!part) return;
+    const m = part.match(/^\*\*([^*]+?)\*\*$/);
+    out.push(m ? { t: m[1], bold: true } : { t: part, bold: false });
+  });
+  return out;
+}
+export const stripBold = (text) => String(text || "").replace(/\*\*([^*]+?)\*\*/g, "$1");
