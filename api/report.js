@@ -21,9 +21,10 @@ const SYSTEM = `당신은 직장인의 주간 업무 회고를 돕는 코치입�
   - headline: 이번 주를 관통하는 패턴을 한 문장으로(해요체, 45자 안팎). 예: "급한 일이 끼어들 때 핵심 과업이 밀리는 한 주였어요"
   - points: 2~3개, 각 한두 문장(해요체, 80자 안팎). 다음 관점 중 근거가 있는 것만: 여러 날 반복된 상황/문제와 그 공통 원인, 해볼 것들이 공통으로 향하는 방향, 상황/문제는 있는데 해볼 것이 비어 있거나 겉도는 부분(놓치고 있는 것). 사용자가 쓴 표현을 짧게 인용해 근거를 보여 줍니다.
   - 지시형 "다음 주엔 ~하세요"로 끝내지 않습니다. 관찰과 해석을 줍니다.
+  - 표면적인 개수 세기("n개 있어요")는 쓰지 않습니다. 왜 그런 일이 반복되는지, 상황/문제와 해볼 것 사이의 어긋남, 핵심 과업을 놓친 날과 그날 적은 상황의 연결처럼 사용자가 혼자서는 못 봤을 연결을 찾습니다. 함께 주는 '날짜별 핵심 과업'과 '루틴' 정보도 근거로 써도 됩니다.
 - 한국어로, 사용자가 쓴 단어를 살려서 씁니다. 꾸밈말이나 칭찬은 넣지 않습니다.`;
 
-async function reportByAI(week, lessons) {
+async function reportByAI(week, lessons, ctx) {
   const client = new Anthropic();
   const lines = lessons.map((l, i) => `${i + 1}. [${l.date}] 상황/문제: ${l.problem || "(없음)"}\n   해볼 것: ${l.try || "(없음)"}`).join("\n");
   const response = await client.beta.messages.parse({
@@ -33,7 +34,7 @@ async function reportByAI(week, lessons) {
     fallbacks: "default",
     output_config: { effort: "low", format: betaZodOutputFormat(Report) },
     system: SYSTEM,
-    messages: [{ role: "user", content: `${week} 레슨런\n${lines}` }],
+    messages: [{ role: "user", content: `${week} 레슨런\n${lines}${ctxText(ctx)}` }],
   });
   if (response.stop_reason === "refusal" || !response.parsed_output) throw new Error("리포트를 만들지 못했습니다.");
   const r = response.parsed_output;
@@ -46,6 +47,12 @@ async function reportByAI(week, lessons) {
   return { themes, insight: { headline: r.insight.headline.trim().slice(0, 120), points } };
 }
 
+const ctxText = (ctx) => {
+  const days = Object.entries(ctx?.coreByDay || {}).filter(([, v]) => v.total).map(([d, v]) => `${d} ${v.done}/${v.total}`);
+  const rs = (ctx?.routines || []).map((r) => `${r.name}: 이번 주 ${r.cnt}/${r.target}회, 지난주 ${r.prev}회`);
+  return (days.length ? `\n\n날짜별 핵심 과업(먹은/전체): ${days.join(", ")}` : "") + (rs.length ? `\n루틴: ${rs.join(" / ")}` : "");
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST만 지원합니다." });
   const b = req.body && typeof req.body === "object" ? req.body : {};
@@ -54,15 +61,21 @@ export default async function handler(req, res) {
     .map((l) => ({ date: s(l?.date, 10), problem: s(stripBold(l?.problem), 500), try: s(stripBold(l?.try), 1000) }))
     .filter((l) => l.problem || l.try)
     .slice(0, 40);
+  /* 함께 보는 맥락: 날짜별 작은 개구리(핵심 과업) 결과, 루틴 이번 주/지난주 횟수 */
+  const ctx = { coreByDay: {}, routines: [] };
+  for (const [d, v] of Object.entries(b.ctx?.coreByDay || {}).slice(0, 7))
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) ctx.coreByDay[d] = { done: Number(v?.done) || 0, total: Number(v?.total) || 0 };
+  ctx.routines = (Array.isArray(b.ctx?.routines) ? b.ctx.routines : []).slice(0, 12)
+    .map((r) => ({ name: s(r?.name, 40), cnt: Number(r?.cnt) || 0, prev: Number(r?.prev) || 0, target: Number(r?.target) || 0 }));
   res.setHeader("Cache-Control", "no-store");
   if (!lessons.length) return res.status(200).json({ themes: [], insight: null, source: "rules" });
 
   if (process.env.ANTHROPIC_API_KEY) {
     try {
-      return res.status(200).json({ ...(await reportByAI(s(b.week, 20), lessons)), source: "ai" });
+      return res.status(200).json({ ...(await reportByAI(s(b.week, 20), lessons, ctx)), source: "ai" });
     } catch (e) {
       console.error("report: AI 실패, 규칙으로 대신함", e?.status || "", e?.message || e);
     }
   }
-  res.status(200).json({ ...reportByRules(lessons), source: "rules" });
+  res.status(200).json({ ...reportByRules(lessons, ctx), source: "rules" });
 }
