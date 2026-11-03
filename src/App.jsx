@@ -253,6 +253,21 @@ export default function App(){
     }catch(e){ setTasksErr(e.message||"할 일을 불러오지 못했어요."); }
   };
 
+  /* 이번 주 큰 개구리 — 노션 과업 DB에서 '주간'이 켜진 과업(마감일 = 그 주 금요일). 고른 날짜의 지난주~이번 주를 불러옴 */
+  const [bigTasks,setBigTasks]=useState(null);   // null = 불러오는 중
+  const bigWriteAt=useRef(0);
+  const loadBig=async(date=selDateRef.current,mode=syncModeRef.current)=>{
+    if(!date) return;
+    if(mode==="local"){try{const a=JSON.parse(LS.get("wr_big")||"[]");setBigTasks(Array.isArray(a)?a:[]);}catch{setBigTasks([]);}return;}
+    if(mode!=="notion") return;
+    const mon=mondayOf(fromISO(date)), started=Date.now();
+    try{
+      const r=await api(`/api/tasks?from=${toISO(addDays(mon,-7))}&to=${toISO(addDays(mon,6))}`);
+      if(bigWriteAt.current>=started) return;
+      setBigTasks((r?.tasks||[]).filter(t=>t.weekly));
+    }catch(e){ setBigTasks(p=>p||[]); }
+  };
+
   const loadRangeTasks=async(mode=syncModeRef.current)=>{
     if(mode!=="notion") return;
     const mon=mondayOf(new Date()), from=toISO(addDays(mon,-21)), to=toISO(addDays(mon,6));
@@ -273,6 +288,7 @@ export default function App(){
       loadRatings();
       loadTasks(selDateRef.current,"notion");
       loadRangeTasks("notion");
+      loadBig(selDateRef.current,"notion");
     }
     catch(e){
       if(sync.mode==="notion") setStaleWarn("노션에 연결하지 못해 마지막으로 불러온 기록을 보여주고 있어요.");
@@ -304,8 +320,9 @@ export default function App(){
   syncModeRef.current=sync.mode; selDateRef.current=selDate;
   /* 날짜를 옮기면 그날 할 일을, 화면을 켜 둔 동안엔 1분마다 다시 불러옴 */
   useEffect(()=>{if(sync.mode==="notion")loadTasks(selDate);},[selDate,sync.mode]);
+  useEffect(()=>{if(sync.mode==="local"&&bigTasks)LS.set("wr_big",JSON.stringify(bigTasks));},[bigTasks,sync.mode]);
   useEffect(()=>{
-    const t=setInterval(()=>{if(document.visibilityState==="visible")loadTasks(selDateRef.current);},60000);
+    const t=setInterval(()=>{if(document.visibilityState==="visible"){loadTasks(selDateRef.current);loadBig(selDateRef.current);}},60000);
     return()=>clearInterval(t);
   },[]);
   useEffect(()=>{
@@ -318,6 +335,8 @@ export default function App(){
   const workToday=today;
   const selMon=mondayOf(fromISO(selDate)),weekStart=toISO(selMon);
   const weekDates=useMemo(()=>weekDatesFrom(selMon),[weekStart]);
+  /* 고른 날짜의 주가 바뀌면 큰 개구리를 다시 불러옴 */
+  useEffect(()=>{if(sync.mode==="notion"||sync.mode==="local")loadBig(selDate,sync.mode);},[weekStart,sync.mode]);
   const isLogged=(id,d)=>(logs[d]||[]).includes(id);
   const applyToggle=(id,d)=>setLogs(prev=>{
     const day=prev[d]||[];const next=day.includes(id)?day.filter(x=>x!==id):[...day,id];
@@ -436,6 +455,32 @@ export default function App(){
   const moveTaskTomorrow=(t)=>{const d=nextDay(selDate);
     dropTask(t.id,{method:"PATCH",body:JSON.stringify({id:t.id,date:d})},"내일로 옮겼어요",d);};
   const deleteTask=(t)=>dropTask(t.id,{method:"DELETE",body:JSON.stringify({id:t.id})},"삭제했어요");
+
+  /* 큰 개구리 고치기 — 화면(큰 개구리 목록 + 회고용 4주치)을 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
+  const applyBig=(fn)=>{setBigTasks(p=>fn(p||[]));setRangeTasks(p=>p&&[...p.filter(t=>!t.weekly),...fn(p.filter(t=>t.weekly))]);};
+  const bigOp=async(fn,req,msg)=>{
+    const snapB=bigTasks, snapR=rangeTasks;
+    bigWriteAt.current=Date.now(); applyBig(fn); if(msg) setToast(msg);
+    if(sync.mode!=="notion"||!req) return null;
+    try{ return await api("/api/tasks",req); }
+    catch(e){ setBigTasks(snapB); setRangeTasks(snapR); setToast(e.message||"노션에 저장하지 못했어요."); return null; }
+    finally{ bigWriteAt.current=Date.now(); }
+  };
+  const friOf=(mon)=>toISO(addDays(fromISO(mon),4));
+  const addBig=async(title)=>{
+    const tmp={id:"tmp"+Date.now(),title,date:friOf(weekStart),done:false,priority:"",priorityColor:"",url:"",weekly:true};
+    const r=await bigOp(l=>[...l,tmp],{method:"POST",body:JSON.stringify({title,date:tmp.date,weekly:true})});
+    if(r?.task) applyBig(l=>l.map(t=>t.id===tmp.id?{...r.task,weekly:true}:t));
+  };
+  const patchBig=(t,patch,msg)=>bigOp(l=>l.map(x=>x.id===t.id?{...x,...patch}:x),
+    String(t.id).startsWith("tmp")?null:{method:"PATCH",body:JSON.stringify({id:t.id,...patch})},msg);
+  const delBig=(t)=>bigOp(l=>l.filter(x=>x.id!==t.id),String(t.id).startsWith("tmp")?null:{method:"DELETE",body:JSON.stringify({id:t.id})},"삭제했어요");
+  /* 지난주 못 끝낸 큰 개구리를 이번 주 금요일 마감으로 옮김 */
+  const carryBig=async(list)=>{
+    const fri=friOf(weekStart);
+    for(const t of list) await patchBig(t,{date:fri});
+    setToast(`${list.length}개를 이번 주로 가져왔어요`);
+  };
 
   const setRating=async(date,score)=>{
     const prev=ratings[date]||0;
@@ -607,9 +652,13 @@ export default function App(){
     const fresh=Object.entries(tasks).filter(([d])=>d>=rangeFrom&&d<=rangeTo);
     const freshDates=new Set(fresh.map(([d])=>d));
     return [...(rangeTasks||[]).filter(t=>!freshDates.has(t.date)),...fresh.flatMap(([d,ts])=>ts.map(t=>({...t,date:d})))]
-      .filter(t=>t.priority!=="폐기");
+      .filter(t=>t.priority!=="폐기"&&!t.weekly);
   })();
   const tasksLoading=isNotion&&rangeTasks==null;
+  /* 큰 개구리 — 회고용 4주치와 오늘 탭에서 불러온 것을 합침(오늘 탭 쪽이 최신) */
+  const bigAll=(()=>{const m=new Map();(rangeTasks||[]).filter(t=>t.weekly).forEach(t=>m.set(t.id,t));(bigTasks||[]).forEach(t=>m.set(t.id,t));return [...m.values()];})();
+  const bigOfWeek=(mon)=>{const sun=toISO(addDays(fromISO(mon),6));return bigAll.filter(t=>t.date>=mon&&t.date<=sun);};
+  const bigCur=bigOfWeek(toISO(curMon));
   const weekTaskList=allTasks.filter(t=>t.date>=toISO(curMon)&&t.date<=rangeTo);
   const wkStat=taskStats(weekTaskList);
 
@@ -621,7 +670,7 @@ export default function App(){
     const core=taskStats(allTasks.filter(t=>t.date>=mon&&t.date<=sun)).core;
     const rs=ds.map(d=>ratings[d]).filter(Boolean);
     const wk=weekOfMonth(mon);
-    return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,
+    return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,big:bigOfWeek(mon),
       tries:ls.reduce((n,l)=>n+splitLines(l.try).length,0),core,
       rating:rs.length?rs.reduce((a,b)=>a+b,0)/rs.length:null};
   };
@@ -648,6 +697,12 @@ export default function App(){
         {!booting&&tab==="todo"&&(
           <div className="fade">
             {evening&&<div style={{marginTop:18}}>{ratingCard}</div>}
+
+            {/* 이번 주 큰 개구리 — 이번 주 안에 반드시 끝낼 일 (최대 3개, 금요일 마감) */}
+            <BigFrogs items={bigTasks?bigOfWeek(weekStart):[]} loading={bigTasks==null&&(isNotion||sync.mode==="loading")}
+              carry={bigTasks?bigOfWeek(toISO(addDays(selMon,-7))).filter(t=>!t.done):[]}
+              onAdd={addBig} onToggle={(t)=>patchBig(t,{done:!t.done})} onRename={(t,title)=>patchBig(t,{title})}
+              onNextWeek={(t)=>patchBig(t,{date:friOf(toISO(addDays(selMon,7)))},"다음 주로 옮겼어요")} onDelete={delBig} onCarry={carryBig}/>
 
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
             <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
@@ -703,9 +758,11 @@ export default function App(){
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={6}/>
             {/* 핵심 과업 = 그날의 개구리. 개구리 먹기(가장 중요한 일을 먼저 끝내기) — 먹은 개구리는 초록으로 채움 */}
-            <SummaryCard icon="frog" color="var(--green)" title="할 일" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
-              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개"}
-                : wkStat.total?{value:`${wkStat.done}/${wkStat.total}`,unit:"완료"}:{empty:"없어요"})}
+            <SummaryCard icon="frog" color="var(--green)" title="큰 개구리" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
+              {...(bigCur.length?{value:`${bigCur.filter(t=>t.done).length}/${bigCur.length}`,unit:"개"}:{empty:"없어요"})}
+              done={bigCur.length>0&&bigCur.every(t=>t.done)} big={bigCur}/>
+            <SummaryCard icon="frog" color="var(--green)" title="하루 개구리" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
+              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개"}:{empty:"없어요"})}
               done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
               frogs={wkStat.core.total?wkStat.core.done:null}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
@@ -749,8 +806,8 @@ export default function App(){
             </section>}
         </SubPage>}
       {subView==="tasks"&&
-        <SubPage title="할 일" onBack={goBack}>
-          <TaskDashboard tasks={allTasks} loading={tasksLoading} today={today} curMon={curMon}/>
+        <SubPage title="개구리" onBack={goBack}>
+          <TaskDashboard tasks={allTasks} big={bigCur} loading={tasksLoading} today={today} curMon={curMon}/>
         </SubPage>}
       {subView==="rating"&&
         <SubPage title="하루 평점" onBack={goBack}>
@@ -795,7 +852,7 @@ function SubPage({title,onBack,children}){
 /* ── 회고 요약 카드 (건강 앱 요약처럼) — 제목·시점 | 큰 값 + 작은 막대 ── */
 /* bars: 최근 7일 값, hi: 오늘 칸 — 그 칸만 카드 색, 나머지는 회색 (건강 앱처럼)
    stars: 0~5 평균 — 막대 대신 별 다섯 개를 평균만큼 채움 */
-function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,stars,frogs,quote,foot,loading,done}){
+function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,stars,frogs,big,quote,foot,loading,done}){
   if(loading) return(
     <div className="btn sum-card" aria-busy="true" aria-label={`${title} 불러오는 중`}>
       <div className="sum-head"><span className="sum-title" style={{color}}><Icon name={icon} size={19}/>{title}</span></div>
@@ -828,6 +885,9 @@ function SummaryCard({icon,color,title,meta,onOpen,value,unit,empty,bars,max,hi,
           </svg>}
         {/* frogs: 이번 주 먹은 개구리 수 — 먹은 것만, 고정 영역 안에서 5마리마다 줄을 늘림 */}
         {frogs!=null&&<FrogPile n={frogs}/>}
+        {/* big: 큰 개구리 — 최대 3마리를 크게, 먹은 것은 초록 채움 */}
+        {big?.length>0&&<span className="big-pile" aria-hidden="true">
+          {big.map((t,i)=><span key={t.id} className="frog-pop" style={{animationDelay:`${i*80}ms`}}><Frog eaten={t.done} size={30}/></span>)}</span>}
         {stars!=null&&
           <span className="sum-stars" role="img" aria-label={`별 5개 중 ${stars.toFixed(1)}개`}>
             {[0,1,2,3,4].map(i=>{const f=Math.max(0,Math.min(1,stars-i));return(
@@ -874,20 +934,30 @@ function taskStats(list){
   const groups=[...PRIOS,""].map(by).filter(g=>g.total);
   return {total:list.length,done:list.filter(t=>t.done).length,groups,core:by("핵심")};
 }
-function TaskDashboard({tasks,loading,today,curMon}){
+function TaskDashboard({tasks,big=[],loading,today,curMon}){
   if(loading) return <SkeletonList card rows={4}/>;
   const monISO=toISO(curMon), friISO=toISO(addDays(curMon,6));
   const week=tasks.filter(t=>t.date>=monISO&&t.date<=friISO);
   const st=taskStats(week);
   const allDone=st.core.total>0&&st.core.done===st.core.total;
-  const left=week.filter(t=>!t.done&&(t.priority==="핵심"||t.priority==="높음"))
-    .sort((a,b)=>(a.priority===b.priority?0:a.priority==="핵심"?-1:1)||(a.date<b.date?-1:a.date>b.date?1:0));
+  const days=weekDatesFrom(curMon).filter(d=>d<=today).reverse()
+    .map(d=>{const list=week.filter(t=>t.date===d&&t.priority==="핵심");return {date:d,list,done:list.filter(t=>t.done).length};})
+    .filter(d=>d.list.length);
   const weeks=[3,2,1,0].map(i=>{const m=addDays(curMon,-7*i),a=toISO(m),b=toISO(addDays(m,6));
     return {a,cur:i===0,st:taskStats(tasks.filter(t=>t.date>=a&&t.date<=b))};}).reverse();
   const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
   return(<>
+    {big.length>0&&
+      <section className="group" style={{marginTop:12}}>
+        <div className="group-head small"><h2>이번 주 큰 개구리</h2><span className="group-side num">{big.filter(t=>t.done).length}/{big.length}</span></div>
+        <div className="cells">
+          {big.map((t,i)=>(
+            <div key={t.id} className="cell"><span className="frog-pop" style={{animationDelay:`${i*80}ms`,flex:"0 0 auto"}}><Frog eaten={t.done} size={26}/></span>
+              <div className="cell-body"><span className={"cell-title"+(t.done?" done":"")}>{t.title}</span></div></div>))}
+        </div>
+      </section>}
     <div className="card">
-      <div className="card-head" style={{color:"var(--green)"}}><Icon name="frog" size={16}/>이번 주 개구리</div>
+      <div className="card-head" style={{color:"var(--green)"}}><Icon name="frog" size={16}/>이번 주 하루 개구리</div>
       {st.core.total
         ? <>
             <div className="value"><span className="num">{allDone?"다 먹었어요":`${st.core.done}/${st.core.total}`}</span>
@@ -899,34 +969,19 @@ function TaskDashboard({tasks,loading,today,curMon}){
         : <div className="value"><span className="num">없어요</span></div>}
     </div>
 
-    <section className="group">
-      <div className="group-head small"><h2>우선순위별</h2>{st.total>0&&<span className="group-side num">{st.done}/{st.total}</span>}</div>
-      {st.groups.length
-        ? <div className="cells">
-            {st.groups.map(g=>(
-              <div key={g.name||"none"} className="cell"><div className="cell-body">
-                {g.name?<PrioTag name={g.name} color={g.color}/>:<span className="cell-sub" style={{margin:0}}>우선순위 없음</span>}
-                <div className="pbar" aria-hidden="true"><span style={{width:`${g.done/g.total*100}%`}} className={g.done===g.total?"full":undefined}/></div>
-                <span className={"cell-value num"+(g.done===g.total?" met":"")} aria-label={`${g.name||"우선순위 없음"} ${g.total}개 중 ${g.done}개 완료`}>{g.done}/{g.total}</span>
-              </div></div>))}
-          </div>
-        : <p className="group-foot">이번 주 마감인 과업이 없어요.</p>}
-    </section>
-
-    {left.length>0&&
+    {/* 핵심 과업은 그날그날 달성 여부를 기록 — 날짜마다 그날의 개구리 (높음·보통·낮음은 언젠가 해내면 되는 일이라 회고에서 빼요) */}
+    {days.length>0&&
       <section className="group">
-        <div className="group-head small"><h2>남은 핵심·높음 과업</h2><span className="group-side num">{left.length}개</span></div>
+        <div className="group-head small"><h2>날짜별 개구리</h2></div>
         <div className="cells">
-          {left.map(t=>(
-            <a key={t.id} className="cell tap" href={t.url||undefined} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none"}}>
-              <div className="cell-body">
-                <div className="cell-main">
-                  <div className="cell-title">{t.title}</div>
-                  <div className="cell-sub" style={t.date<today?{color:"var(--red)"}:undefined}>{dLabel(t.date)}{t.date<today?" · 지남":""}</div>
-                </div>
-                <PrioTag name={t.priority} color={t.priorityColor}/>
+          {days.map(d=>{const ok=d.done===d.list.length;return(
+            <div key={d.date} className="cell"><div className="cell-body" style={{padding:"10px 16px 10px 0"}}>
+              <div className="cell-main">
+                <div className="cell-title">{dLabel(d.date)}</div>
+                <div className="day-frogs" aria-hidden="true">{d.list.map(t=><Frog key={t.id} eaten={t.done} size={18}/>)}</div>
               </div>
-            </a>))}
+              <span className={"cell-value num"+(ok?" met":"")} aria-label={`개구리 ${d.list.length}개 중 ${d.done}개`}>{d.done}/{d.list.length}</span>
+            </div></div>);})}
         </div>
       </section>}
 
@@ -937,7 +992,7 @@ function TaskDashboard({tasks,loading,today,curMon}){
           <div key={w.a} className="cell"><div className="cell-body">
             <div className="cell-main">
               <div className="cell-title">{w.cur?"이번 주":`${wk.m}월 ${wk.w}주차`}</div>
-              <div className="cell-sub">{w.st.total?`전체 ${w.st.total}개 중 ${w.st.done}개 완료`:"마감인 과업 없음"}</div>
+              {!c.total&&<div className="cell-sub">핵심 과업 없음</div>}
             </div>
             {c.total>0&&<span className={"cell-value num frog-count"+(ok?" met":"")} aria-label={`개구리 ${c.total}개 중 ${c.done}개`}><Frog eaten={ok} size={16}/>{c.done}/{c.total}</span>}
           </div></div>);})}
@@ -1160,6 +1215,66 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
             })}
       </div>
     </div>
+  );
+}
+
+/* ── 이번 주 큰 개구리 — 이번 주 안에 반드시 끝낼 일(최대 3개, 금요일 마감) ──
+   개구리를 누르면 먹음(완료), 이름은 그 자리에서 고침, ⋯에 다음 주로·삭제. 비어 있으면 지난주 못 끝낸 것을 이어 올 수 있음 */
+const BIG_MAX=3;
+function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onDelete,onCarry}){
+  const [draft,setDraft]=useState("");
+  const [edit,setEdit]=useState(null);
+  const [more,setMore]=useState(null);
+  const add=()=>{const t=draft.trim();if(!t||items.length>=BIG_MAX)return;onAdd(t);setDraft("");};
+  const commit=()=>{if(!edit)return;const t=items.find(x=>x.id===edit.id),v=edit.text.trim();if(t&&v&&v!==t.title)onRename(t,v);setEdit(null);};
+  const done=items.filter(t=>t.done).length;
+  return(
+    <section className="group">
+      <div className="group-head">
+        <h2>이번 주 큰 개구리</h2>
+        <span className="group-side">{items.length>0&&<span className="num">{done}/{items.length}</span>}</span>
+      </div>
+      <div className="cells">
+        {loading&&<SkeletonCell check w={58}/>}
+        {!loading&&items.map(t=>(
+          <div key={t.id} className="cell">
+            <button className="btn big-frog" role="checkbox" aria-checked={t.done} aria-label={`${t.title} ${t.done?"먹음":"아직"}`} onClick={()=>onToggle(t)}>
+              <Frog eaten={t.done} size={26}/></button>
+            <div className="cell-body">
+              {edit?.id===t.id
+                ? <input className="cell-input" autoFocus value={edit.text} maxLength={200} aria-label="큰 개구리 이름"
+                    onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
+                    onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
+                : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
+              {edit?.id!==t.id&&
+                <button className="btn more" aria-label={`${t.title} 더보기`} aria-haspopup="menu"
+                  onClick={(e)=>{e.stopPropagation();setMore({t,rect:e.currentTarget.getBoundingClientRect()});}}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="7.6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="16.4" cy="12" r="1.3" fill="currentColor"/></svg>
+                </button>}
+            </div>
+          </div>))}
+        {!loading&&items.length===0&&carry.length>0&&
+          <button className="btn cell tap" onClick={()=>onCarry(carry)}>
+            <span className="lead-ico" style={{background:"var(--green)"}}><Icon name="frog" size={16}/></span>
+            <div className="cell-body"><div className="cell-main"><div className="cell-title">지난주에서 이어 하기</div>
+              <div className="cell-sub">못 끝낸 큰 개구리 {carry.length}개</div></div><span className="disclosure"><Chevron size={14}/></span></div>
+          </button>}
+        {!loading&&items.length<BIG_MAX&&
+          <div className="cell">
+            <span className="add-ico" aria-hidden="true"/>
+            <div className="cell-body">
+              <input className="cell-input" value={draft} maxLength={200} enterKeyHint="done"
+                placeholder={items.length?"하나 더 추가":"이번 주 반드시 끝낼 일"} aria-label="새 큰 개구리"
+                onChange={e=>setDraft(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();add();}}}/>
+            </div>
+          </div>}
+      </div>
+      {more&&<Popover rect={more.rect} rows={2} label="큰 개구리 더보기" onClose={()=>setMore(null)}>
+        <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onNextWeek(t);}}>다음 주로 넘기기</button>
+        <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
+      </Popover>}
+    </section>
   );
 }
 
@@ -1529,7 +1644,7 @@ function useCountUp(target,on,ms=700){
   },[target,on]);
   return v;
 }
-function WeeklyReport({mon,label,lessons,tries,core,rating,mode,onClose}){
+function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose}){
   const [page,setPage]=useState(0);
   const [rep,setRep]=useState(null);   // { themes, focus }
   const N=4;
@@ -1567,7 +1682,16 @@ function WeeklyReport({mon,label,lessons,tries,core,rating,mode,onClose}){
             <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2 2 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg></button></div>
       </div>
       <div className="rp-stage" onClick={tap} aria-live="polite">
-        {page===0&&<div key="p0" className="rp-page">
+        {page===0&&big.length>0&&<div key="p0b" className="rp-page">
+          <p className="rp-k rp-in" style={st(0)}>이번 주 큰 개구리</p>
+          <h2 className="rp-big rp-in" style={st(1)}>{big.filter(t=>t.done).length}<small>/{big.length}개</small></h2>
+          {big.map((t,i)=>(
+            <div key={t.id} className="rp-card rp-big-row rp-in" style={st(i+2)}>
+              <span className="frog-pop" style={{animationDelay:`${400+i*120}ms`}}><Frog eaten={t.done} size={34}/></span>
+              <span className={t.done?undefined:"rp-left"}>{t.title}</span></div>))}
+          <p className="rp-sub rp-in" style={st(big.length+2)}>{`하루 개구리는 ${core.total}개 중 ${core.done}개 먹었어요`}</p>
+        </div>}
+        {page===0&&!big.length&&<div key="p0" className="rp-page">
           <p className="rp-k rp-in" style={st(0)}>이번 주 개구리</p>
           <h2 className="rp-big rp-in" style={st(1)}>{core.total?<>{core.done}<small>/{core.total}개</small></>:"없었어요"}</h2>
           {core.done>0&&<div className="rp-frogs">{Array.from({length:Math.min(core.done,20)},(_,i)=>
@@ -1780,6 +1904,11 @@ const CSS=`
   .btn.star.on path,.stars .on path{fill:var(--orange)}
   .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
+  .day-frogs{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}
+  .big-pile{flex:0 0 auto;display:flex;gap:4px;align-items:flex-end;margin-bottom:2px}
+  .rp-big-row{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
+  .rp-big-row .rp-left{color:var(--rp-ink2)}
+  .btn.big-frog{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;margin-left:-3px}
   .frog-pile{flex:0 0 auto;width:96px;height:56px;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-end;gap:2px}
   .frog-line{display:flex;gap:2px;width:100%;justify-content:flex-start;padding-left:4px}
   .frog-pop{display:inline-flex;animation:frog-pop .22s cubic-bezier(.3,1.5,.5,1) both}

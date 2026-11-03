@@ -1,7 +1,9 @@
 /* /api/tasks — 오늘 할 일 (노션 과업 DB에서 마감일이 그날인 과업)
    GET    ?date=YYYY-MM-DD        →  { tasks: [{ id, title, date, done, priority, priorityColor, url }], tasksDb }
    GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD  →  같은 모양, 마감일이 그 사이인 과업 (회고의 할 일 대시보드)
-   POST   { title, date, priority? } →  { task }   (마감일 = date 로 새 과업, 우선순위는 노션 선택지 중 하나)
+   POST   { title, date, priority?, weekly? } →  { task }   (마감일 = date 로 새 과업, 우선순위는 노션 선택지 중 하나)
+   weekly: '주간' 체크박스 — 이번 주 반드시 끝낼 일(큰 개구리, 마감일 = 그 주 금요일).
+           하루 조회(?date)에서는 빼고, 기간 조회(?from·to)에서는 weekly: true로 함께 돌려줌
    GET 응답의 priorities: [{ name, color }] — 노션 우선순위 선택지(폐기 제외), 추가할 때 고르는 목록
    PATCH  { id, done?, title?, priority?, date? } →  { ok }  (완료·이름·우선순위·마감일 수정, priority ""는 비움)
    DELETE { id }                  →  { ok }     (노션 페이지 보관 처리)
@@ -20,6 +22,7 @@ async function taskProps() {
   const pDue      = byName(props, ["마감일", "마감", "Due", "날짜", "Date"], ["date"], used) || byType(props, ["date"], used);
   const pDone     = byName(props, ["완료", "Done"], ["checkbox"], used) || byType(props, ["checkbox"], used);
   const pPriority = byName(props, ["우선순위", "Priority"], ["select", "status"], used);
+  const pWeekly   = byName(props, ["주간", "Weekly"], ["checkbox"], used);   // 없으면 주간 기능 없이 동작
   if (!pTitle || !pDue || !pDone) {
     const e = new Error("할 일 DB에서 이름(title)·마감일(date)·완료(checkbox) 속성을 찾지 못했습니다.");
     e.status = 500;
@@ -31,7 +34,7 @@ async function taskProps() {
     .filter((o) => o.name !== "폐기")
     .map((o) => ({ name: o.name, color: o.color || "default" }))
     .sort((a, z) => (RANK[a.name] ?? 4) - (RANK[z.name] ?? 4));
-  cached = { pTitle, pDue, pDone, pPriority, pType, options };
+  cached = { pTitle, pDue, pDone, pPriority, pWeekly, pType, options };
   return cached;
 }
 
@@ -48,6 +51,7 @@ const toTask = (P) => (page) => ({
   /* 노션 선택지 색 그대로 (default·gray·brown·orange·yellow·green·blue·purple·pink·red) */
   priorityColor: P.pPriority ? (() => { const v = page.properties?.[P.pPriority]; return v?.select?.color || v?.status?.color || "default"; })() : "",
   url: page.url || "",
+  weekly: P.pWeekly ? !!page.properties?.[P.pWeekly]?.checkbox : false,
 });
 
 export default async function handler(req, res) {
@@ -67,10 +71,10 @@ export default async function handler(req, res) {
       const rows = await queryAll(CFG.tasksDb, { filter });
       const tasks = rows
         .map(toTask(P))
-        .filter((t) => t.priority !== "폐기")
+        .filter((t) => t.priority !== "폐기" && (range || !t.weekly))
         .sort((a, z) => (a.done - z.done) || ((RANK[a.priority] ?? 4) - (RANK[z.priority] ?? 4)));
       res.setHeader("Cache-Control", "no-store");
-      return res.status(200).json({ tasks, tasksDb: CFG.tasksDb, priorities: P.options });
+      return res.status(200).json({ tasks, tasksDb: CFG.tasksDb, priorities: P.options, weeklyReady: !!P.pWeekly });
     }
 
     if (req.method === "POST") {
@@ -84,6 +88,7 @@ export default async function handler(req, res) {
             [P.pTitle]: { title: [{ text: { content: title } }] },
             [P.pDue]: { date: { start: b.date } },
             [P.pDone]: { checkbox: false },
+            ...(b.weekly && P.pWeekly ? { [P.pWeekly]: { checkbox: true } } : {}),
             ...(P.pPriority && P.options.some((o) => o.name === b.priority)
               ? { [P.pPriority]: { [P.pType]: { name: b.priority } } } : {}),
           },
