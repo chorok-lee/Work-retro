@@ -5,7 +5,7 @@
    weekly: '주간' 체크박스 — 이번 주 반드시 끝낼 일(큰 개구리, 마감일 = 그 주 금요일).
            하루 조회(?date)에서는 빼고, 기간 조회(?from·to)에서는 weekly: true로 함께 돌려줌
    GET 응답의 priorities: [{ name, color }] — 노션 우선순위 선택지(폐기 제외), 추가할 때 고르는 목록
-   PATCH  { id, done?, title?, priority?, date? } →  { ok }  (완료·이름·우선순위·마감일 수정, priority ""는 비움)
+   PATCH  { id, done?, title?, priority?, date?, pinned?, order? } →  { ok }  (완료·이름·우선순위·마감일·고정·순서 수정, priority ""는 비움)
    DELETE { id }                  →  { ok }     (노션 페이지 보관 처리)
 
    앱과 노션 어느 쪽에서 바꿔도 같은 DB 행을 고치므로, 다시 불러오면 맞춰집니다.
@@ -23,6 +23,8 @@ async function taskProps() {
   const pDone     = byName(props, ["완료", "Done"], ["checkbox"], used) || byType(props, ["checkbox"], used);
   const pPriority = byName(props, ["우선순위", "Priority"], ["select", "status"], used);
   const pWeekly   = byName(props, ["주간", "Weekly"], ["checkbox"], used);   // 없으면 주간 기능 없이 동작
+  const pPinned   = byName(props, ["고정", "Pin", "Pinned"], ["checkbox"], used);   // 할 일 맨 위 고정
+  const pOrder    = byName(props, ["순서", "Order"], ["number"], used);             // 이번 주 목표 순서
   if (!pTitle || !pDue || !pDone) {
     const e = new Error("할 일 DB에서 이름(title)·마감일(date)·완료(checkbox) 속성을 찾지 못했습니다.");
     e.status = 500;
@@ -34,7 +36,7 @@ async function taskProps() {
     .filter((o) => o.name !== "폐기")
     .map((o) => ({ name: o.name, color: o.color || "default" }))
     .sort((a, z) => (RANK[a.name] ?? 4) - (RANK[z.name] ?? 4));
-  cached = { pTitle, pDue, pDone, pPriority, pWeekly, pType, options };
+  cached = { pTitle, pDue, pDone, pPriority, pWeekly, pPinned, pOrder, pType, options };
   return cached;
 }
 
@@ -52,6 +54,8 @@ const toTask = (P) => (page) => ({
   priorityColor: P.pPriority ? (() => { const v = page.properties?.[P.pPriority]; return v?.select?.color || v?.status?.color || "default"; })() : "",
   url: page.url || "",
   weekly: P.pWeekly ? !!page.properties?.[P.pWeekly]?.checkbox : false,
+  pinned: P.pPinned ? !!page.properties?.[P.pPinned]?.checkbox : false,
+  order: P.pOrder ? page.properties?.[P.pOrder]?.number ?? null : null,
 });
 
 export default async function handler(req, res) {
@@ -107,7 +111,9 @@ export default async function handler(req, res) {
         else if (P.options.some((o) => o.name === b.priority)) properties[P.pPriority] = { [P.pType]: { name: b.priority } };
       }
       if (isDate(b.date)) properties[P.pDue] = { date: { start: b.date } };
-      if (!Object.keys(properties).length) return res.status(400).json({ error: "바꿀 값(done, title, priority, date)이 없습니다." });
+      if (typeof b.pinned === "boolean" && P.pPinned) properties[P.pPinned] = { checkbox: b.pinned };
+      if (typeof b.order === "number" && P.pOrder) properties[P.pOrder] = { number: b.order };
+      if (!Object.keys(properties).length) return res.status(400).json({ error: "바꿀 값(done, title, priority, date, pinned, order)이 없습니다." });
       await notion(`/pages/${b.id}`, { method: "PATCH", body: { properties } });
       return res.status(200).json({ ok: true });
     }

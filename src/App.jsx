@@ -485,6 +485,12 @@ export default function App(){
   };
   const patchBig=(t,patch,msg)=>bigOp(l=>l.map(x=>x.id===t.id?{...x,...patch}:x),
     String(t.id).startsWith("tmp")?null:{method:"PATCH",body:JSON.stringify({id:t.id,...patch})},msg);
+  /* 이번 주 목표 순서 바꾸기 — 바뀐 목록 전체에 순서를 0,1,2… 로 다시 매김 */
+  const moveBig=async(items,t,dir)=>{
+    const i=items.findIndex(x=>x.id===t.id), j=i+dir; if(i<0||j<0||j>=items.length) return;
+    const next=[...items]; [next[i],next[j]]=[next[j],next[i]];
+    for(const [k,x] of next.entries()) if(x.order!==k) await patchBig(x,{order:k});
+  };
   const delBig=(t)=>bigOp(l=>l.filter(x=>x.id!==t.id),String(t.id).startsWith("tmp")?null:{method:"DELETE",body:JSON.stringify({id:t.id})},"삭제했어요");
   /* 지난주 못 끝낸 큰 개구리를 이번 주 금요일 마감으로 옮김 */
   const carryBig=async(list)=>{
@@ -668,7 +674,10 @@ export default function App(){
   const tasksLoading=isNotion&&rangeTasks==null;
   /* 큰 개구리 — 회고용 4주치와 오늘 탭에서 불러온 것을 합침(오늘 탭 쪽이 최신) */
   const bigAll=(()=>{const m=new Map();(rangeTasks||[]).filter(t=>t.weekly).forEach(t=>m.set(t.id,t));(bigTasks||[]).forEach(t=>m.set(t.id,t));return [...m.values()];})();
-  const bigOfWeek=(mon)=>{const sun=toISO(addDays(fromISO(mon),6));return bigAll.filter(t=>t.date>=mon&&t.date<=sun);};
+  /* 순서(order)가 있으면 그 순서로, 없으면 만든 순서 그대로 */
+  const bigOfWeek=(mon)=>{const sun=toISO(addDays(fromISO(mon),6));
+    return bigAll.map((t,i)=>({t,i})).filter(({t})=>t.date>=mon&&t.date<=sun)
+      .sort((a,b)=>(a.t.order??1e9+a.i)-(b.t.order??1e9+b.i)).map(({t})=>t);};
   const bigCur=bigOfWeek(toISO(curMon));
   const weekTaskList=allTasks.filter(t=>t.date>=toISO(curMon)&&t.date<=rangeTo);
   const wkStat=taskStats(weekTaskList);
@@ -713,7 +722,7 @@ export default function App(){
             <BigFrogs items={bigTasks?bigOfWeek(weekStart):[]} loading={bigTasks==null&&(isNotion||sync.mode==="loading")}
               carry={bigTasks?bigOfWeek(toISO(addDays(selMon,-7))).filter(t=>!t.done):[]}
               onAdd={addBig} onToggle={(t)=>patchBig(t,{done:!t.done})} onRename={(t,title)=>patchBig(t,{title})}
-              onNextWeek={(t)=>patchBig(t,{date:friOf(toISO(addDays(selMon,7)))},"다음 주로 옮겼어요")} onDelete={delBig} onCarry={carryBig}/>
+              onMove={moveBig} onDelete={delBig} onCarry={carryBig}/>
 
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
             <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
@@ -725,6 +734,10 @@ export default function App(){
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}
               onTomorrow={moveTaskTomorrow} onDelete={deleteTask}
               onDuplicate={(t)=>{addTask(t.title,t.priority||"");setToast("복제했어요");}}
+              onPin={(t)=>patchTask(t.id,{pinned:!t.pinned})}
+              onMove={async(g,t,dir)=>{const i=g.findIndex(x=>x.id===t.id),j=i+dir;if(i<0||j<0||j>=g.length)return;
+                const next=[...g];[next[i],next[j]]=[next[j],next[i]];
+                for(const [k,x] of next.entries()) if(x.order!==k) await patchTask(x.id,{order:k});}}
               onMoveUndone={moveUndone}/>
 
             {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
@@ -1250,10 +1263,18 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
   );
 }
 
+/* 할 일 정렬 — 고정 → 안 한 일 → 우선순위(핵심·높음·보통·Backlog·없음), 같은 묶음 안에선 순서(order), 없으면 불러온 순서 */
+const P_RANK={핵심:0,높음:1,보통:2,Backlog:3,낮음:3};
+const sameGroup=(a,b)=>!!a.pinned===!!b.pinned&&!!a.done===!!b.done&&(P_RANK[a.priority]??4)===(P_RANK[b.priority]??4);
+function sortTasks(list){
+  return list.map((t,i)=>({t,i})).sort((a,b)=>(b.t.pinned?1:0)-(a.t.pinned?1:0)||(a.t.done?1:0)-(b.t.done?1:0)
+    ||(P_RANK[a.t.priority]??4)-(P_RANK[b.t.priority]??4)||(a.t.order??1e6+a.i)-(b.t.order??1e6+b.i)).map(({t})=>t);
+}
+
 /* ── 이번 주 큰 개구리 — 이번 주 안에 반드시 끝낼 일(최대 3개, 금요일 마감) ──
-   개구리를 누르면 먹음(완료), 이름은 그 자리에서 고침, ⋯에 다음 주로·삭제. 비어 있으면 지난주 못 끝낸 것을 이어 올 수 있음 */
+   개구리를 누르면 먹음(완료), 이름은 그 자리에서 고침, ⋯에 위로·아래로(순서)·삭제. 비어 있으면 지난주 못 끝낸 것을 이어 올 수 있음 */
 const BIG_MAX=3;
-function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onDelete,onCarry}){
+function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onMove,onDelete,onCarry}){
   const [draft,setDraft]=useState("");
   const [edit,setEdit]=useState(null);
   const [more,setMore]=useState(null);
@@ -1302,10 +1323,12 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onD
             </div>
           </div>}
       </div>
-      {more&&<Popover rect={more.rect} rows={2} label="큰 개구리 더보기" onClose={()=>setMore(null)}>
-        <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onNextWeek(t);}}>다음 주로 넘기기</button>
+      {more&&(()=>{const idx=items.findIndex(x=>x.id===more.t.id);return(
+      <Popover rect={more.rect} rows={1+(idx>0?1:0)+(idx<items.length-1?1:0)} label="이번 주 목표 더보기" onClose={()=>setMore(null)}>
+        {idx>0&&<button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onMove(items,t,-1);}}>위로 올리기</button>}
+        {idx<items.length-1&&<button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onMove(items,t,1);}}>아래로 내리기</button>}
         <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
-      </Popover>}
+      </Popover>);})()}
     </section>
   );
 }
@@ -1313,7 +1336,9 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onD
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone,onPin,onMove}){
+  const sorted=sortTasks(tasks);
+  const groupOf=(t)=>sorted.filter(x=>sameGroup(x,t));
   const [manage,setManage]=useState(null);   // 관리하기 메뉴 위치
   const undone=tasks.filter(t=>!t.done&&t.priority!=="핵심");   // 핵심은 그날의 기록이라 옮기지 않음
   const [draft,setDraft]=useState("");
@@ -1346,7 +1371,8 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
       {err&&<div className="banner" style={{margin:"0 0 8px"}}>{err}</div>}
       <div className="cells">
         {loading&&[0,1,2].map(i=><SkeletonCell key={i} check w={[62,48,70][i]}/>)}
-        {!loading&&tasks.map(t=>(
+        {/* 고정 → 안 한 일 → 우선순위 순, 같은 묶음 안에선 내가 정한 순서(⋯ 위로·아래로) */}
+        {!loading&&sorted.map(t=>(
           <div key={t.id} className="cell">
             <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="hit"
               onClick={()=>onToggle(t)}
@@ -1359,6 +1385,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
                     onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
                     onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
                 : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
+              {t.pinned&&edit?.id!==t.id&&<svg className="pin-ico" width="12" height="12" viewBox="0 0 24 24" aria-label="고정됨"><path d="M14.5 3 21 9.5l-2.2.7-3.6 3.6.4 4.9-1.5 1.5-4.2-4.2L5 21l-.9-.9 5-4.9-4.2-4.2 1.5-1.5 4.9.4 3.6-3.6z" fill="currentColor"/></svg>}
               {edit?.id!==t.id&&priorities.length>0&&(t.priority
                 ? tagOf(t.priority,t.priorityColor,(e)=>openPop(t.id,e),`우선순위 ${t.priority}, 바꾸기`)
                 : <button className="btn prio-blank" aria-haspopup="menu" aria-label="우선순위 정하기" onClick={(e)=>openPop(t.id,e)}/>)}
@@ -1384,11 +1411,15 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
         <button role="menuitem" className="btn pop-row" disabled={!undone.length} onClick={()=>{setManage(null);onMoveUndone(undone);}}>
           <span>못 한 일 미루기</span><span className="pop-count num">{undone.length||""}</span></button>
       </Popover>}
-      {more&&<Popover rect={more.rect} rows={3} label="할 일 더보기" onClose={()=>setMore(null)}>
+      {more&&(()=>{const g=groupOf(more.t), gi=g.findIndex(x=>x.id===more.t.id), up=gi>0, down=gi<g.length-1;return(
+      <Popover rect={more.rect} rows={4+(up?1:0)+(down?1:0)} label="할 일 더보기" onClose={()=>setMore(null)}>
+        <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onPin(t);}}>{more.t.pinned?"고정 해제":"맨 위에 고정"}</button>
+        {up&&<button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onMove(g,t,-1);}}>위로 올리기</button>}
+        {down&&<button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onMove(g,t,1);}}>아래로 내리기</button>}
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onDuplicate(t);}}>복제하기</button>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onTomorrow(t);}}>내일 하기</button>
         <button role="menuitem" className="btn pop-row danger" onClick={()=>{const t=more.t;setMore(null);onDelete(t);}}>삭제하기</button>
-      </Popover>}
+      </Popover>);})()}
       {pop&&<PrioPopover rect={pop.rect} options={priorities}
         value={tasks.find(t=>t.id===pop.id)?.priority||""}
         onClose={()=>setPop(null)}
@@ -1957,6 +1988,7 @@ const CSS=`
   .pond-big{display:flex;gap:3px}
   .pond-small{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px;max-width:96px}
   .tag.line{background:var(--fill2);color:var(--label2)}   /* Backlog: 보통보다 한 단계 옅은 회색 채움 */
+  .pin-ico{flex:0 0 auto;color:var(--label3);margin-right:2px}
   .task-frog{display:inline-flex;width:24px;height:24px;margin:0 -1px}
   .big-pile{flex:0 0 auto;display:flex;gap:4px;align-items:flex-end;margin-bottom:2px}
   .rp-big-row{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
