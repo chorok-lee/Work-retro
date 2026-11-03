@@ -40,7 +40,7 @@ async function taskProps() {
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 const plain = (rich) => (rich || []).map((t) => t.plain_text).join("").trim();
-const RANK = { 핵심: 0, 높음: 1, 보통: 2, 낮음: 3 };
+const RANK = { 핵심: 0, 높음: 1, 보통: 2, Backlog: 3, 낮음: 3 };
 
 const toTask = (P) => (page) => ({
   id: page.id,

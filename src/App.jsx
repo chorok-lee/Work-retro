@@ -755,16 +755,10 @@ export default function App(){
 
         {!booting&&tab==="review"&&(
           <div className="fade summary">
+            {/* 개구리 먹기 — 큰 개구리(이번 주 목표)와 작은 개구리(그날의 핵심 과업)를 한 카드에 */}
+            <FrogCard big={bigCur} core={wkStat.core} loading={tasksLoading} onOpen={()=>openSub("tasks")}/>
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={6}/>
-            {/* 핵심 과업 = 그날의 개구리. 개구리 먹기(가장 중요한 일을 먼저 끝내기) — 먹은 개구리는 초록으로 채움 */}
-            <SummaryCard icon="frog" color="var(--green)" title="큰 개구리" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
-              {...(bigCur.length?{value:`${bigCur.filter(t=>t.done).length}/${bigCur.length}`,unit:"개"}:{empty:"없어요"})}
-              done={bigCur.length>0&&bigCur.every(t=>t.done)} big={bigCur}/>
-            <SummaryCard icon="frog" color="var(--green)" title="하루 개구리" meta="이번 주" onOpen={()=>openSub("tasks")} loading={tasksLoading}
-              {...(wkStat.core.total?{value:`${wkStat.core.done}/${wkStat.core.total}`,unit:"개"}:{empty:"없어요"})}
-              done={wkStat.core.total>0&&wkStat.core.done===wkStat.core.total}
-              frogs={wkStat.core.total?wkStat.core.done:null}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" stars={ratingAvg}/>
           </div>
@@ -927,7 +921,7 @@ function SkeletonList({rows=3,tall,card}){
 }
 
 /* ── 할 일 대시보드 ── 이번 주 핵심 과업을 다 끝냈는지, 우선순위별 몇 개 중 몇 개, 남은 핵심·높음, 최근 4주 */
-const PRIOS=["핵심","높음","보통","낮음"];
+const PRIOS=["핵심","높음","보통","Backlog"];
 function taskStats(list){
   const by=(name)=>{const ts=list.filter(t=>(PRIOS.includes(t.priority)?t.priority:"")===name);
     return {name,total:ts.length,done:ts.filter(t=>t.done).length,color:ts.find(t=>t.priorityColor)?.priorityColor||"default"};};
@@ -949,7 +943,7 @@ function TaskDashboard({tasks,big=[],loading,today,curMon}){
   return(<>
     {big.length>0&&
       <section className="group" style={{marginTop:12}}>
-        <div className="group-head small"><h2>이번 주 큰 개구리</h2><span className="group-side num">{big.filter(t=>t.done).length}/{big.length}</span></div>
+        <div className="group-head small"><h2>이번 주 목표</h2><span className="group-side num">{big.filter(t=>t.done).length}/{big.length}</span></div>
         <div className="cells">
           {big.map((t,i)=>(
             <div key={t.id} className="cell"><span className="frog-pop" style={{animationDelay:`${i*80}ms`,flex:"0 0 auto"}}><Frog eaten={t.done} size={26}/></span>
@@ -957,7 +951,7 @@ function TaskDashboard({tasks,big=[],loading,today,curMon}){
         </div>
       </section>}
     <div className="card">
-      <div className="card-head" style={{color:"var(--green)"}}><Icon name="frog" size={16}/>이번 주 하루 개구리</div>
+      <div className="card-head" style={{color:"var(--green)"}}><Icon name="frog" size={16}/>이번 주 작은 개구리</div>
       {st.core.total
         ? <>
             <div className="value"><span className="num">{allDone?"다 먹었어요":`${st.core.done}/${st.core.total}`}</span>
@@ -999,6 +993,32 @@ function TaskDashboard({tasks,big=[],loading,today,curMon}){
       </div>
     </section>
   </>);
+}
+
+/* ── 회고 개구리 카드 — 왼쪽: 큰 개구리·작은 개구리 숫자 나란히 / 오른쪽: 연못처럼 큰 개구리 줄 위, 먹은 작은 개구리 아래 ── */
+function FrogCard({big,core,loading,onOpen}){
+  const bigDone=big.filter(t=>t.done).length, small=Math.min(core.done,12);
+  const stat=(label,d,t)=>(
+    <div className="frog-stat"><span className="frog-stat-k">{label}</span>
+      {t?<span className="sum-value"><span className="num">{d}/{t}</span><small>개</small></span>:<span className="frog-stat-none">없어요</span>}</div>);
+  return(
+    <button className="btn sum-card" onClick={onOpen} aria-label="개구리 자세히 보기" aria-busy={loading||undefined}>
+      <div className="sum-head">
+        <span className="sum-title" style={{color:"var(--green)"}}><Icon name="frog" size={19}/>개구리</span>
+        <span className="sum-meta">이번 주<Chevron size={15}/></span>
+      </div>
+      {loading
+        ? <div className="sum-body"><div style={{display:"flex",gap:24}}><div className="sk" style={{height:44,width:80}}/><div className="sk" style={{height:44,width:80}}/></div></div>
+        : <div className="sum-body">
+            <div className="frog-stats">{stat("큰 개구리",bigDone,big.length)}{stat("작은 개구리",core.done,core.total)}</div>
+            {(big.length>0||small>0)&&
+              <span className="frog-pond" role="img" aria-label={`큰 개구리 ${big.length}개 중 ${bigDone}개, 작은 개구리 ${core.done}개 먹음`}>
+                {big.length>0&&<span className="pond-big">{big.map((t,i)=><span key={t.id} className="frog-pop" style={{animationDelay:`${i*90}ms`}}><Frog eaten={t.done} size={28}/></span>)}</span>}
+                {small>0&&<span className="pond-small">{Array.from({length:small},(_,i)=><span key={i} className="frog-pop" style={{animationDelay:`${big.length*90+i*45}ms`}}><Frog eaten size={13}/></span>)}</span>}
+              </span>}
+          </div>}
+    </button>
+  );
 }
 
 /* 하루 평점 목록 — 최근 평가한 날 */
@@ -1231,7 +1251,7 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onD
   return(
     <section className="group">
       <div className="group-head">
-        <h2>이번 주 큰 개구리</h2>
+        <h2>이번 주 목표</h2>
         <span className="group-side">{items.length>0&&<span className="num">{done}/{items.length}</span>}</span>
       </div>
       <div className="cells">
@@ -1284,7 +1304,7 @@ const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","
 function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete}){
   const [draft,setDraft]=useState("");
   /* 새 할 일은 우선순위 '낮음'(없으면 마지막 선택지)으로 저장 — 입력 줄엔 태그를 보이지 않고, 추가된 뒤 태그를 눌러 바꿈 */
-  const defPrio=(priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
+  const defPrio=(priorities.find(o=>o.name==="Backlog")||priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
   const [pop,setPop]=useState(null);     // { id: 과업 id, rect }
   const [more,setMore]=useState(null);   // ⋯ 메뉴 { t, rect }
   const [edit,setEdit]=useState(null);   // { id, text }
@@ -1683,13 +1703,13 @@ function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose})
       </div>
       <div className="rp-stage" onClick={tap} aria-live="polite">
         {page===0&&big.length>0&&<div key="p0b" className="rp-page">
-          <p className="rp-k rp-in" style={st(0)}>이번 주 큰 개구리</p>
+          <p className="rp-k rp-in" style={st(0)}>이번 주 목표</p>
           <h2 className="rp-big rp-in" style={st(1)}>{big.filter(t=>t.done).length}<small>/{big.length}개</small></h2>
           {big.map((t,i)=>(
             <div key={t.id} className="rp-card rp-big-row rp-in" style={st(i+2)}>
               <span className="frog-pop" style={{animationDelay:`${400+i*120}ms`}}><Frog eaten={t.done} size={34}/></span>
               <span className={t.done?undefined:"rp-left"}>{t.title}</span></div>))}
-          <p className="rp-sub rp-in" style={st(big.length+2)}>{`하루 개구리는 ${core.total}개 중 ${core.done}개 먹었어요`}</p>
+          <p className="rp-sub rp-in" style={st(big.length+2)}>{`작은 개구리는 ${core.total}개 중 ${core.done}개 먹었어요`}</p>
         </div>}
         {page===0&&!big.length&&<div key="p0" className="rp-page">
           <p className="rp-k rp-in" style={st(0)}>이번 주 개구리</p>
@@ -1905,6 +1925,13 @@ const CSS=`
   .btn.star:active svg{transform:scale(.88)}
   .stars{display:inline-flex;gap:1px;line-height:0}
   .day-frogs{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}
+  .frog-stats{display:flex;gap:22px;min-width:0}
+  .frog-stat{display:flex;flex-direction:column;gap:4px}
+  .frog-stat-k{font-size:13px;font-weight:600;color:var(--label2)}
+  .frog-stat-none{font-size:22px;font-weight:700;line-height:36px}
+  .frog-pond{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:104px}
+  .pond-big{display:flex;gap:3px}
+  .pond-small{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px;max-width:96px}
   .big-pile{flex:0 0 auto;display:flex;gap:4px;align-items:flex-end;margin-bottom:2px}
   .rp-big-row{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
   .rp-big-row .rp-left{color:var(--rp-ink2)}
