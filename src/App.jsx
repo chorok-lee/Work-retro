@@ -1336,7 +1336,9 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
           <div key={t.id} className="cell">
             <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="hit"
               onClick={()=>onToggle(t)}
-              onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}><CheckBox on={t.done}/></span>
+              onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}>
+              {/* 핵심 과업 = 그날의 개구리 — 체크박스 대신 개구리, 끝내면 초록으로 먹음 */}
+              {t.priority==="핵심"?<span className="task-frog"><Frog eaten={t.done} size={24}/></span>:<CheckBox on={t.done}/>}</span>
             <div className="cell-body">
               {edit?.id===t.id
                 ? <input className="cell-input" autoFocus value={edit.text} maxLength={200} aria-label="할 일 이름"
@@ -1532,11 +1534,11 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
     </div>
   );
 }
-/* 우선순위 태그 — 노션 색 그대로, '핵심'만 개구리 초록 + 개구리 아이콘 (핵심 과업 = 그날의 개구리) */
+/* 우선순위 태그 — 노션 색 그대로, '핵심'만 개구리 초록 (개구리 모양은 할 일 줄의 체크 자리에) */
 function PrioTag({name,color,as,...rest}){
   const core=name==="핵심";
   const cls=(as==="button"?"btn ":"")+"tag c-"+(core?"green":NOTION_COLORS.includes(color)?color:"default");
-  const body=<>{core&&<Icon name="frog" size={12}/>}{name}</>;
+  const body=name;
   return as==="button"?<button className={cls} {...rest}>{body}</button>:<span className={cls} {...rest}>{body}</span>;
 }
 /* 먹은 개구리 더미 — 요약 카드의 그림 자리(96×56)는 그대로, 5마리마다 줄을 늘리고 개구리를 작게 (최대 4줄·20마리).
@@ -1932,6 +1934,7 @@ const CSS=`
   .frog-pond{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:104px}
   .pond-big{display:flex;gap:3px}
   .pond-small{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px;max-width:96px}
+  .task-frog{display:inline-flex;width:24px;height:24px;margin:0 -1px}
   .big-pile{flex:0 0 auto;display:flex;gap:4px;align-items:flex-end;margin-bottom:2px}
   .rp-big-row{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
   .rp-big-row .rp-left{color:var(--rp-ink2)}
