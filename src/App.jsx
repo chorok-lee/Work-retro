@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { extractTags, suggestTriesByRules, splitLines, reportByRules, splitBold, stripBold } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
@@ -1263,6 +1263,23 @@ function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
   );
 }
 
+/* 순서가 바뀐 줄을 제자리에서 새 자리로 미끄러지게(FLIP). 줄마다 data-flip="id"
+   — 그리기 직후 지난번 위치와의 차이만큼 되돌렸다가 0으로 움직임. 모션 줄이기 설정에선 끔 */
+function useFlip(ref){
+  const prev=useRef(new Map());
+  useLayoutEffect(()=>{
+    const box=ref.current; if(!box) return;
+    const top0=box.getBoundingClientRect().top, now=new Map();
+    box.querySelectorAll(":scope>[data-flip]").forEach(el=>now.set(el.dataset.flip,el.getBoundingClientRect().top-top0));
+    const still=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if(!still) box.querySelectorAll(":scope>[data-flip]").forEach(el=>{
+      const was=prev.current.get(el.dataset.flip), dy=was==null?0:was-now.get(el.dataset.flip);
+      if(Math.abs(dy)>1) el.animate([{transform:`translateY(${dy}px)`},{transform:"none"}],{duration:320,easing:"cubic-bezier(.2,.8,.2,1)"});
+    });
+    prev.current=now;
+  });
+}
+
 /* 할 일 정렬 — 고정 → 안 한 일 → 우선순위(핵심·높음·보통·Backlog·없음), 같은 묶음 안에선 순서(order), 없으면 불러온 순서 */
 const P_RANK={핵심:0,높음:1,보통:2,Backlog:3,낮음:3};
 const sameGroup=(a,b)=>!!a.pinned===!!b.pinned&&!!a.done===!!b.done&&(P_RANK[a.priority]??4)===(P_RANK[b.priority]??4);
@@ -1281,16 +1298,17 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onMove,onDelet
   const add=()=>{const t=draft.trim();if(!t||items.length>=BIG_MAX)return;onAdd(t);setDraft("");};
   const commit=()=>{if(!edit)return;const t=items.find(x=>x.id===edit.id),v=edit.text.trim();if(t&&v&&v!==t.title)onRename(t,v);setEdit(null);};
   const done=items.filter(t=>t.done).length;
+  const listRef=useRef(null); useFlip(listRef);
   return(
     <section className="group">
       <div className="group-head">
         <h2>이번 주 목표</h2>
         <span className="group-side">{items.length>0&&<span className="num">{done}/{items.length}</span>}</span>
       </div>
-      <div className="cells">
+      <div className="cells" ref={listRef}>
         {loading&&<SkeletonCell check w={58}/>}
         {!loading&&items.map(t=>(
-          <div key={t.id} className="cell">
+          <div key={t.id} className="cell" data-flip={t.id}>
             <button className="btn big-frog" role="checkbox" aria-checked={t.done} aria-label={`${t.title} ${t.done?"먹음":"아직"}`} onClick={()=>onToggle(t)}>
               <Frog eaten={t.done} size={26}/></button>
             <div className="cell-body">
@@ -1299,7 +1317,7 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onMove,onDelet
                     onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
                     onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
                 : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
-              {edit?.id!==t.id&&
+              {
                 <button className="btn more" aria-label={`${t.title} 더보기`} aria-haspopup="menu"
                   onClick={(e)=>{e.stopPropagation();setMore({t,rect:e.currentTarget.getBoundingClientRect()});}}>
                   <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="7.6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="16.4" cy="12" r="1.3" fill="currentColor"/></svg>
@@ -1338,6 +1356,7 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onMove,onDelet
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
 function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone,onPin,onMove}){
   const sorted=sortTasks(tasks);
+  const listRef=useRef(null); useFlip(listRef);
   const groupOf=(t)=>sorted.filter(x=>sameGroup(x,t));
   const [manage,setManage]=useState(null);   // 관리하기 메뉴 위치
   const undone=tasks.filter(t=>!t.done&&t.priority!=="핵심");   // 핵심은 그날의 기록이라 옮기지 않음
@@ -1369,11 +1388,11 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
         </span>
       </div>
       {err&&<div className="banner" style={{margin:"0 0 8px"}}>{err}</div>}
-      <div className="cells">
+      <div className="cells" ref={listRef}>
         {loading&&[0,1,2].map(i=><SkeletonCell key={i} check w={[62,48,70][i]}/>)}
         {/* 고정 → 안 한 일 → 우선순위 순, 같은 묶음 안에선 내가 정한 순서(⋯ 위로·아래로) */}
         {!loading&&sorted.map(t=>(
-          <div key={t.id} className="cell">
+          <div key={t.id} className="cell" data-flip={t.id}>
             <span role="checkbox" aria-checked={t.done} aria-label={t.title} tabIndex={0} className="hit"
               onClick={()=>onToggle(t)}
               onKeyDown={e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();onToggle(t);}}}>
@@ -1385,11 +1404,11 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
                     onChange={e=>setEdit({id:t.id,text:e.target.value})} onBlur={commit}
                     onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}if(e.key==="Escape")setEdit(null);}}/>
                 : <button className={"btn cell-title edit"+(t.done?" done":"")} onClick={()=>setEdit({id:t.id,text:t.title})}>{t.title}</button>}
-              {t.pinned&&edit?.id!==t.id&&<svg className="pin-ico" width="12" height="12" viewBox="0 0 24 24" aria-label="고정됨"><path d="M14.5 3 21 9.5l-2.2.7-3.6 3.6.4 4.9-1.5 1.5-4.2-4.2L5 21l-.9-.9 5-4.9-4.2-4.2 1.5-1.5 4.9.4 3.6-3.6z" fill="currentColor"/></svg>}
-              {edit?.id!==t.id&&priorities.length>0&&(t.priority
+              {t.pinned&&<svg className="pin-ico" width="12" height="12" viewBox="0 0 24 24" aria-label="고정됨"><path d="M14.5 3 21 9.5l-2.2.7-3.6 3.6.4 4.9-1.5 1.5-4.2-4.2L5 21l-.9-.9 5-4.9-4.2-4.2 1.5-1.5 4.9.4 3.6-3.6z" fill="currentColor"/></svg>}
+              {priorities.length>0&&(t.priority
                 ? tagOf(t.priority,t.priorityColor,(e)=>openPop(t.id,e),`우선순위 ${t.priority}, 바꾸기`)
                 : <button className="btn prio-blank" aria-haspopup="menu" aria-label="우선순위 정하기" onClick={(e)=>openPop(t.id,e)}/>)}
-              {edit?.id!==t.id&&
+              {
                 <button className="btn more" aria-label={`${t.title} 더보기`} aria-haspopup="menu"
                   onClick={(e)=>{e.stopPropagation();setMore({t,rect:e.currentTarget.getBoundingClientRect()});}}>
                   <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="7.6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="16.4" cy="12" r="1.3" fill="currentColor"/></svg>
@@ -1915,7 +1934,7 @@ const CSS=`
   .cell-sub{font-size:15px;color:var(--label2);margin-top:2px;display:flex;align-items:center;gap:8px}
   .cell-value{font-size:17px;color:var(--label2);flex:0 0 auto}
   .cell-value.met{color:var(--blue)}
-  .cell-input{flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:17px;padding:0}
+  .cell-input{flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:17px;line-height:1.3;height:22px;padding:0}
   .cell-input::placeholder,.ta::placeholder{color:var(--label3)}
   .btn.cell-title.edit{flex:1;text-align:left;cursor:text}
   /* 우선순위 태그 — 노션 선택지 색 팔레트 */
