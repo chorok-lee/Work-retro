@@ -698,7 +698,8 @@ export default function App(){
       let streak=0; for(let i=0;i<12;i++){const m=toISO(addDays(fromISO(mon),-7*i)); if(cnt(h,m)>=t) streak++; else break;}
       const dueSoFar=ds.filter(d=>d<=lastDay&&dueOn(h,d)).length;
       const days=ds.filter(d=>dueOn(h,d)).map(d=>({d,on:isLogged(h.id,d),future:d>today}));
-      return {id:h.id,name:h.name,t,c,pc,streak,dueSoFar,days};
+      const fresh=!Object.keys(logs).some(d=>d<mon&&(logs[d]||[]).includes(h.id));   // 이번 주에 처음 기록을 시작한 루틴
+      return {id:h.id,name:h.name,t,c,pc,streak,dueSoFar,days,fresh};
     });
     const coreByDay={}; ds.forEach(d=>{const c=allTasks.filter(t=>t.date===d&&t.priority==="핵심");if(c.length)coreByDay[d]={done:c.filter(t=>t.done).length,total:c.length};});
     return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,big:bigOfWeek(mon),core,routines,coreByDay};
@@ -1737,16 +1738,31 @@ const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnt
 /* ── 주간 리포트 — 그라데이션 위 네 장(스토리처럼). 오른쪽을 누르면 다음, 왼쪽은 이전 ──
    1 이번 주 목표·개구리  2 이번 주 루틴(루틴마다 횟수·지난주 대비·연속)  3 해볼 것 테마  4 이번 주 인사이트(레슨런 전체 요약, AI 또는 규칙) */
 /* 루틴 한 줄 회고 — 한 번도 못 함 / 지난주 대비 / 계속 잘함 / 목표 채움 순으로 하나 */
+/* 루틴 한 줄 회고 — 말 걸듯이. 같은 말이 줄줄이 반복되지 않게 루틴 이름으로 표현을 골라 씀 */
+const pick=(name,arr)=>arr[[...String(name)].reduce((n,c)=>n+c.charCodeAt(0),0)%arr.length];
 function routineNote(r){
-  if(r.c===0&&r.dueSoFar>0) return `이번 주에 한 번도 못 했어요. 포기한 건 아니죠?`;
-  if(r.c>=r.t&&r.streak>=2) return `${r.streak}주 연속 목표를 채웠어요. 계속 잘 하고 있어요.`;
-  if(r.c>=r.t) return r.pc<r.t?`지난주보다 ${r.c-r.pc}번 더 해서 목표를 채웠어요.`:`이번 주 목표를 채웠어요.`;
-  if(r.c>r.pc) return `지난주보다 ${r.c-r.pc}번 더 했어요.`;
-  if(r.c<r.pc) return `지난주보다 ${r.pc-r.c}번 덜 했어요.`;
-  return `지난주와 같이 ${r.c}번 했어요.`;
+  const left=r.t-r.c;
+  if(r.c===0&&r.dueSoFar>0) return "이번 주엔 한 번도 못 했어요. 포기한 건 아니죠?";
+  if(r.c>=r.t&&r.streak>=2) return pick(r.name,[`${r.streak}주째 빠짐없이 했어요. 이제 완전히 몸에 붙었네요.`,`${r.streak}주 연속이에요. 이 리듬 그대로 가요.`]);
+  if(r.c>=r.t) return r.fresh?pick(r.name,["첫 주부터 하루도 안 빠졌어요. 시작이 아주 좋아요.","시작하자마자 꽉 채웠어요."])
+    :pick(r.name,["이번 주는 하루도 안 빠졌어요.","목표를 꽉 채운 한 주였어요."]);
+  if(r.fresh) return pick(r.name,[`이번 주 ${r.c}번으로 시작했어요. 다음 주엔 ${Math.min(r.t,r.c+1)}번을 노려 봐요.`,`첫 주 ${r.c}번, 출발은 했어요. 이제 횟수를 조금씩 늘려 봐요.`]);
+  if(r.c>r.pc) return pick(r.name,[`지난주(${r.pc}번)보다 ${r.c-r.pc}번 더 챙겼어요. 점점 붙고 있어요.`,`지난주보다 늘었어요. ${left}번만 더 하면 꽉 채워요.`]);
+  if(r.c<r.pc) return pick(r.name,[`지난주엔 ${r.pc}번이었는데 이번 주엔 ${r.c}번이에요. 바쁜 한 주였나요?`,`지난주보다 ${r.pc-r.c}번 줄었어요. 어디서 밀렸는지 한번 볼까요?`]);
+  return pick(r.name,[`지난주처럼 ${r.c}번 했어요. 하루만 더 해 볼까요?`,`${r.c}번에서 멈춰 있어요. ${left}번 남았어요.`]);
+}
+/* 루틴 장 머리말 — 한 주를 한 문장으로 */
+function routineHeadline(rs){
+  const full=rs.filter(r=>r.c>=r.t), zero=rs.filter(r=>r.c===0&&r.dueSoFar>0);
+  if(!rs.length) return "";
+  if(full.length===rs.length) return "모든 루틴을 꽉 채웠어요";
+  if(full.length) return `${rs.length}개 중 ${full.length}개는 꽉 채웠어요`;
+  if(zero.length===rs.length) return "루틴을 쉬어 간 한 주였어요";
+  return "조금씩은 챙긴 한 주였어요";
 }
 function WeeklyReport({mon,label,lessons,big=[],core,routines=[],coreByDay={},mode,onClose}){
   const [page,setPage]=useState(0);
+  const [showRaw,setShowRaw]=useState(false);   // 인사이트 장에서 레슨런 원문 펼침
   const [rep,setRep]=useState(null);   // { themes, focus }
   const N=4;
   const key=`${mon}:${lessons.map(l=>l.id+(l.try||"").length).join(",")}`;
@@ -1800,15 +1816,22 @@ function WeeklyReport({mon,label,lessons,big=[],core,routines=[],coreByDay={},mo
           <p className="rp-sub rp-in" style={st(3)}>{core.total?(core.done===core.total?"핵심 과업을 다 먹었어요":`핵심 과업 ${core.total-core.done}개가 남았어요`):"이번 주엔 핵심 과업이 없었어요"}</p>
         </div>}
         {page===1&&<div key="p1" className="rp-page">
-          {/* 루틴 회고 — 루틴마다 이번 주 몇 번 지켰는지, 지난주와 비교, 계속 잘하는지 */}
+          {/* 루틴 회고 — 한 문장 머리말 + 꽉 채움 / 조금만 더 / 다시 시작해 봐요 로 묶어서, 말 걸듯 한 줄씩 */}
           <p className="rp-k rp-in" style={st(0)}>이번 주 루틴</p>
-          {!routines.length&&<p className="rp-sub rp-in" style={st(1)}>아직 루틴이 없어요</p>}
-          {routines.map((r,i)=>(
-            <div key={r.id} className="rp-card rp-in rp-routine" style={st(i+1)}>
-              <div className="rp-ct">{r.name}<span className="num">{Math.min(r.c,r.t)}/{r.t}</span></div>
-              <div className="rp-dots" aria-hidden="true">{r.days.map(x=><span key={x.d} className={x.on?"on":x.future?"future":undefined}/>)}</div>
-              <div className="rp-note">{routineNote(r)}</div>
-            </div>))}
+          {!routines.length?<p className="rp-sub rp-in" style={st(1)}>아직 루틴이 없어요</p>
+            :<h2 className="rp-focus rp-in" style={st(1)}>{routineHeadline(routines)}</h2>}
+          {[["꽉 채웠어요",r=>r.c>=r.t],["조금만 더",r=>r.c>0&&r.c<r.t],["다시 시작해 봐요",r=>r.c===0]].map(([title,f],gi)=>{
+            const rs=routines.filter(f); if(!rs.length) return null;
+            return(
+              <div key={title} className="rp-card rp-in rp-rgroup" style={st(gi+2)}>
+                <div className="rp-gt">{title}</div>
+                {rs.map(r=>(
+                  <div key={r.id} className="rp-rrow">
+                    <div className="rp-rhead"><span className="rp-rname">{r.name}</span>
+                      <span className="rp-dots" aria-label={`${r.t}번 중 ${Math.min(r.c,r.t)}번`}>{r.days.map(x=><span key={x.d} className={x.on?"on":x.future?"future":undefined}/>)}</span></div>
+                    <div className="rp-note">{routineNote(r)}</div>
+                  </div>))}
+              </div>);})}
         </div>}
         {page===2&&<div key="p2" className="rp-page">
           <p className="rp-k rp-in" style={st(0)}>이번 주 해볼 것</p>
@@ -1824,7 +1847,17 @@ function WeeklyReport({mon,label,lessons,big=[],core,routines=[],coreByDay={},mo
           <p className="rp-k rp-in" style={st(0)}>이번 주 인사이트</p>
           {rep?.insight?<>
             <h2 className="rp-focus rp-in" style={st(1)}>{rep.insight.headline}</h2>
-            {rep.insight.points.map((x,i)=><div key={i} className="rp-card rp-in" style={st(i+2)}>{x}</div>)}</>
+            {rep.insight.points.map((x,i)=><div key={i} className="rp-card rp-in" style={st(i+2)}>{x}</div>)}
+            {/* 근거가 된 레슨런을 작게 펼쳐 보기 */}
+            {lessons.length>0&&<div className="rp-in" style={st(rep.insight.points.length+2)} onClick={e=>e.stopPropagation()}>
+              <button className="btn rp-more" aria-expanded={showRaw} onClick={()=>setShowRaw(v=>!v)}>
+                {showRaw?"레슨런 접기":`이번 주 레슨런 ${lessons.length}개 보기`}<Chevron dir="r" size={12}/></button>
+              {showRaw&&<div className="rp-raw">{lessons.map(l=>(
+                <div key={l.id} className="rp-raw-row">
+                  <span className="rp-raw-d">{fromISO(l.date).getMonth()+1}/{fromISO(l.date).getDate()} {wdOf(l.date)}</span>
+                  <div className="rp-raw-t">{l.text&&<Lines text={l.text}/>}{l.try&&<div className="rp-raw-try">↳ <div><Lines text={l.try}/></div></div>}</div>
+                </div>))}</div>}
+            </div>}</>
             :<div className="rp-card rp-in" style={st(1)}><div className="sk rp-sk" style={{width:"80%"}}/><div className="sk rp-sk" style={{width:"60%",marginTop:10}}/></div>}
           <button className="btn rp-done rp-in" style={st((rep?.insight?.points.length||1)+2)} onClick={(e)=>{e.stopPropagation();onClose();}}>좋아요</button>
         </div>}
@@ -2052,7 +2085,7 @@ const CSS=`
   .rp-bars>span.on::after{content:"";position:absolute;inset:0;background:var(--rp-ink);transform-origin:left;animation:rp-bar .5s ease-out both}
   .rp-head{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;font-weight:600;color:var(--rp-ink2)}
   .btn.rp-x{width:32px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:var(--rp-ink);background:var(--rp-glass);box-shadow:inset 0 0 0 .5px var(--rp-edge)}
-  .rp-stage{position:relative;max-width:600px;margin:0 auto;height:calc(100% - 70px - env(safe-area-inset-top));padding:0 24px calc(40px + env(safe-area-inset-bottom));overflow-y:auto;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .rp-stage{position:relative;max-width:600px;margin:0 auto;height:calc(100% - 70px - env(safe-area-inset-top));padding:0 24px calc(64px + env(safe-area-inset-bottom));overflow-y:auto;cursor:pointer;-webkit-tap-highlight-color:transparent}
   .rp-page{min-height:100%;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px 0}
   .rp-in{animation:rp-in .5s cubic-bezier(.2,.8,.2,1) both}
   .rp-k{margin:0;font-size:17px;font-weight:600;color:var(--rp-ink2)}
@@ -2065,12 +2098,27 @@ const CSS=`
   .rp-card .lbullets li::before{color:var(--rp-ink2)}
   .rp-ct{display:flex;justify-content:space-between;font-size:17px;font-weight:700;margin-bottom:8px}
   .rp-ct .num{font-size:15px;color:var(--rp-ink2);font-weight:600}
-  .rp-routine .rp-ct{margin-bottom:6px}
-  .rp-dots{display:flex;gap:5px;margin-bottom:8px}
-  .rp-dots>span{width:10px;height:10px;border-radius:5px;background:var(--rp-glass);box-shadow:inset 0 0 0 1px var(--rp-edge)}
+  .rp-gt{font-size:13px;font-weight:700;color:var(--rp-ink2);margin-bottom:4px}
+  .rp-rrow{padding:10px 0}
+  .rp-rrow+.rp-rrow{border-top:.5px solid var(--rp-edge)}
+  .rp-rhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .rp-rname{font-size:16px;font-weight:600;min-width:0}
+  .rp-note{margin-top:3px}
+  .rp-dots{flex:0 0 auto;display:flex;gap:4px}
+  .rp-dots>span{width:8px;height:8px;border-radius:4px;background:var(--rp-glass);box-shadow:inset 0 0 0 1px var(--rp-edge)}
   .rp-dots>span.on{background:var(--green);box-shadow:none}
   .rp-dots>span.future{opacity:.4}
   .rp-note{font-size:15px;color:var(--rp-ink2)}
+  .btn.rp-more{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:var(--rp-ink2);padding:6px 2px}
+  .btn.rp-more svg{transition:transform .2s}
+  .btn.rp-more[aria-expanded="true"] svg{transform:rotate(90deg)}
+  .rp-raw{margin-top:4px;padding:8px 14px;border-radius:16px;background:var(--rp-glass);box-shadow:inset 0 0 0 .5px var(--rp-edge);font-size:13px;line-height:1.45;color:var(--rp-ink2)}
+  .rp-raw-row{display:flex;gap:10px;padding:6px 0}
+  .rp-raw-row+.rp-raw-row{border-top:.5px solid var(--rp-edge)}
+  .rp-raw-d{flex:0 0 auto;width:42px;font-weight:600}
+  .rp-raw-t{min-width:0;flex:1}
+  .rp-raw-try{color:var(--rp-ink);display:flex;gap:4px;margin-top:2px}
+  .rp-raw-try>div{min-width:0}
   .rp-sk{height:14px;background:var(--rp-glass)}
   .rp-focus{margin:0;font-size:32px;font-weight:800;line-height:1.3;letter-spacing:-.01em;word-break:keep-all}
   .btn.rp-done{align-self:flex-start;margin-top:12px;padding:14px 28px;border-radius:999px;font-size:17px;font-weight:700;color:var(--rp-base);background:var(--rp-ink)}
