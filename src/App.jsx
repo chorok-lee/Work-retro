@@ -690,9 +690,18 @@ export default function App(){
     const core=taskStats(allTasks.filter(t=>t.date>=mon&&t.date<=sun)).core;
     const rs=ds.map(d=>ratings[d]).filter(Boolean);
     const wk=weekOfMonth(mon);
-    return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,big:bigOfWeek(mon),
-      tries:ls.reduce((n,l)=>n+splitLines(l.try).length,0),core,
-      rating:rs.length?rs.reduce((a,b)=>a+b,0)/rs.length:null};
+    /* 루틴 회고 — 루틴마다 이번 주 횟수, 지난주 대비, 연속으로 채운 주 */
+    const lastDay=sun<today?sun:today;
+    const cnt=(h,m)=>weekDatesFrom(fromISO(m)).reduce((n,d)=>n+(isLogged(h.id,d)?1:0),0);
+    const routines=list.filter(h=>(startOf(h)||"")<=sun).map(h=>{
+      const t=tgtOf(h), c=cnt(h,mon), prevMon=toISO(addDays(fromISO(mon),-7)), pc=cnt(h,prevMon);
+      let streak=0; for(let i=0;i<12;i++){const m=toISO(addDays(fromISO(mon),-7*i)); if(cnt(h,m)>=t) streak++; else break;}
+      const dueSoFar=ds.filter(d=>d<=lastDay&&dueOn(h,d)).length;
+      const days=ds.filter(d=>dueOn(h,d)).map(d=>({d,on:isLogged(h.id,d),future:d>today}));
+      return {id:h.id,name:h.name,t,c,pc,streak,dueSoFar,days};
+    });
+    const coreByDay={}; ds.forEach(d=>{const c=allTasks.filter(t=>t.date===d&&t.priority==="핵심");if(c.length)coreByDay[d]={done:c.filter(t=>t.done).length,total:c.length};});
+    return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,big:bigOfWeek(mon),core,routines,coreByDay};
   };
   const reportHas=lessons.some(l=>l.try&&l.date>=reportMon&&l.date<=toISO(addDays(fromISO(reportMon),6)));
 
@@ -1726,31 +1735,31 @@ const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnt
 });
 
 /* ── 주간 리포트 — 그라데이션 위 네 장(스토리처럼). 오른쪽을 누르면 다음, 왼쪽은 이전 ──
-   1 이번 주 목표·개구리  2 숫자로 본 한 주  3 해볼 것 테마  4 이번 주 인사이트(레슨런 전체 요약, AI 또는 규칙) */
-function useCountUp(target,on,ms=700){
-  const [v,setV]=useState(0);
-  useEffect(()=>{
-    if(!on){setV(0);return;}
-    if(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches){setV(target);return;}
-    let raf,t0;const step=(t)=>{t0??=t;const k=Math.min(1,(t-t0)/ms);setV(target*(1-Math.pow(1-k,3)));if(k<1)raf=requestAnimationFrame(step);};
-    raf=requestAnimationFrame(step);return()=>cancelAnimationFrame(raf);
-  },[target,on]);
-  return v;
+   1 이번 주 목표·개구리  2 이번 주 루틴(루틴마다 횟수·지난주 대비·연속)  3 해볼 것 테마  4 이번 주 인사이트(레슨런 전체 요약, AI 또는 규칙) */
+/* 루틴 한 줄 회고 — 한 번도 못 함 / 지난주 대비 / 계속 잘함 / 목표 채움 순으로 하나 */
+function routineNote(r){
+  if(r.c===0&&r.dueSoFar>0) return `이번 주에 한 번도 못 했어요. 포기한 건 아니죠?`;
+  if(r.c>=r.t&&r.streak>=2) return `${r.streak}주 연속 목표를 채웠어요. 계속 잘 하고 있어요.`;
+  if(r.c>=r.t) return r.pc<r.t?`지난주보다 ${r.c-r.pc}번 더 해서 목표를 채웠어요.`:`이번 주 목표를 채웠어요.`;
+  if(r.c>r.pc) return `지난주보다 ${r.c-r.pc}번 더 했어요.`;
+  if(r.c<r.pc) return `지난주보다 ${r.pc-r.c}번 덜 했어요.`;
+  return `지난주와 같이 ${r.c}번 했어요.`;
 }
-function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose}){
+function WeeklyReport({mon,label,lessons,big=[],core,routines=[],coreByDay={},mode,onClose}){
   const [page,setPage]=useState(0);
   const [rep,setRep]=useState(null);   // { themes, focus }
   const N=4;
   const key=`${mon}:${lessons.map(l=>l.id+(l.try||"").length).join(",")}`;
   useEffect(()=>{
     let alive=true;
-    try{const c=JSON.parse(LS.get("wr_reports2")||"{}")[key];if(c){setRep(c);return;}}catch{}
+    try{const c=JSON.parse(LS.get("wr_reports3")||"{}")[key];if(c){setRep(c);return;}}catch{}
     const items=lessons.filter(l=>l.text||l.try).map(l=>({date:l.date,problem:stripBold(l.text),try:stripBold(l.try)}));
     const done=(r)=>{if(!alive)return;setRep(r);
-      try{const all=JSON.parse(LS.get("wr_reports2")||"{}");all[key]=r;LS.set("wr_reports2",JSON.stringify(all));}catch{}};
-    if(mode==="notion") api("/api/report",{method:"POST",body:JSON.stringify({week:label,lessons:items})})
-      .then(r=>done({themes:r.themes||[],insight:r.insight}),()=>done(reportByRules(items)));
-    else done(reportByRules(items));
+      try{const all=JSON.parse(LS.get("wr_reports3")||"{}");all[key]=r;LS.set("wr_reports3",JSON.stringify(all));}catch{}};
+    const ctx={coreByDay,routines:routines.map(r=>({name:r.name,cnt:r.c,prev:r.pc,target:r.t}))};
+    if(mode==="notion") api("/api/report",{method:"POST",body:JSON.stringify({week:label,lessons:items,ctx})})
+      .then(r=>done({themes:r.themes||[],insight:r.insight}),()=>done(reportByRules(items,ctx)));
+    else done(reportByRules(items,ctx));
     return()=>{alive=false;};
   },[key]);
   useEffect(()=>{
@@ -1763,7 +1772,6 @@ function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose})
     h.overflow="hidden";h.scrollbarGutter="auto";return()=>{h.overflow=prev[0];h.scrollbarGutter=prev[1];};},[]);
   const tap=(e)=>{const r=e.currentTarget.getBoundingClientRect();
     if(e.clientX-r.left<r.width*.3)setPage(p=>Math.max(0,p-1));else if(page<N-1)setPage(p=>p+1);};
-  const cLessons=useCountUp(lessons.length,page===1), cTries=useCountUp(tries,page===1), cRate=useCountUp(rating||0,page===1);
   const st=(i)=>({animationDelay:`${120+i*110}ms`});
   return(
     <div role="dialog" aria-modal="true" aria-label={`${label} 주간 리포트`} className="rp">
@@ -1792,13 +1800,15 @@ function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose})
           <p className="rp-sub rp-in" style={st(3)}>{core.total?(core.done===core.total?"핵심 과업을 다 먹었어요":`핵심 과업 ${core.total-core.done}개가 남았어요`):"이번 주엔 핵심 과업이 없었어요"}</p>
         </div>}
         {page===1&&<div key="p1" className="rp-page">
-          <p className="rp-k rp-in" style={st(0)}>숫자로 본 한 주</p>
-          <div className="rp-grid">
-            <div className="rp-tile rp-in" style={st(1)}><span className="rp-tk">레슨런</span><b className="num">{Math.round(cLessons)}</b></div>
-            <div className="rp-tile rp-in" style={st(2)}><span className="rp-tk">해볼 것</span><b className="num">{Math.round(cTries)}</b></div>
-            <div className="rp-tile rp-in" style={st(3)}><span className="rp-tk">하루 평점</span><b className="num">{rating==null?"–":cRate.toFixed(1)}</b></div>
-            <div className="rp-tile rp-in" style={st(4)}><span className="rp-tk">개구리</span><b className="num">{core.done}<small>/{core.total}</small></b></div>
-          </div>
+          {/* 루틴 회고 — 루틴마다 이번 주 몇 번 지켰는지, 지난주와 비교, 계속 잘하는지 */}
+          <p className="rp-k rp-in" style={st(0)}>이번 주 루틴</p>
+          {!routines.length&&<p className="rp-sub rp-in" style={st(1)}>아직 루틴이 없어요</p>}
+          {routines.map((r,i)=>(
+            <div key={r.id} className="rp-card rp-in rp-routine" style={st(i+1)}>
+              <div className="rp-ct">{r.name}<span className="num">{Math.min(r.c,r.t)}/{r.t}</span></div>
+              <div className="rp-dots" aria-hidden="true">{r.days.map(x=><span key={x.d} className={x.on?"on":x.future?"future":undefined}/>)}</div>
+              <div className="rp-note">{routineNote(r)}</div>
+            </div>))}
         </div>}
         {page===2&&<div key="p2" className="rp-page">
           <p className="rp-k rp-in" style={st(0)}>이번 주 해볼 것</p>
@@ -2050,16 +2060,17 @@ const CSS=`
   .rp-big small{font-size:30px;font-weight:700;color:var(--rp-ink2);margin-left:4px}
   .rp-sub{margin:0;font-size:17px;line-height:1.45;color:var(--rp-ink2)}
   .rp-frogs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
-  .rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .rp-tile,.rp-card{background:var(--rp-glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:inset 0 0 0 .5px var(--rp-edge);border-radius:22px}
-  .rp-tile{padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px}
-  .rp-tk{font-size:13px;font-weight:600;color:var(--rp-ink2)}
-  .rp-tile b{font-family:ui-rounded,"SF Pro Rounded",-apple-system,"Pretendard",sans-serif;font-size:40px;font-weight:800;line-height:1}
-  .rp-tile b small{font-size:20px;color:var(--rp-ink2)}
+  .rp-card{background:var(--rp-glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:inset 0 0 0 .5px var(--rp-edge);border-radius:22px}
   .rp-card{padding:16px 18px;font-size:16px;line-height:1.45}
   .rp-card .lbullets li::before{color:var(--rp-ink2)}
   .rp-ct{display:flex;justify-content:space-between;font-size:17px;font-weight:700;margin-bottom:8px}
   .rp-ct .num{font-size:15px;color:var(--rp-ink2);font-weight:600}
+  .rp-routine .rp-ct{margin-bottom:6px}
+  .rp-dots{display:flex;gap:5px;margin-bottom:8px}
+  .rp-dots>span{width:10px;height:10px;border-radius:5px;background:var(--rp-glass);box-shadow:inset 0 0 0 1px var(--rp-edge)}
+  .rp-dots>span.on{background:var(--green);box-shadow:none}
+  .rp-dots>span.future{opacity:.4}
+  .rp-note{font-size:15px;color:var(--rp-ink2)}
   .rp-sk{height:14px;background:var(--rp-glass)}
   .rp-focus{margin:0;font-size:32px;font-weight:800;line-height:1.3;letter-spacing:-.01em;word-break:keep-all}
   .btn.rp-done{align-self:flex-start;margin-top:12px;padding:14px 28px;border-radius:999px;font-size:17px;font-weight:700;color:var(--rp-base);background:var(--rp-ink)}

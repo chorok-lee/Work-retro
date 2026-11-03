@@ -90,7 +90,7 @@ export function suggestTriesByRules(problems, tries) {
 /* 규칙 기반 주간 리포트 — AI가 없거나 실패할 때. 해볼 것을 줄(불릿)마다 나눠 첫 주제 태그로 묶음 */
 const THEME_TITLE = { 회의: "회의 준비", 소통: "소통·공유", 우선순위: "우선순위 먼저", 집중: "집중 시간", 일정: "시간·일정",
   피드백: "검토·피드백", 협업: "함께 일하기", 문서: "기록·문서", 학습: "배우기", 컨디션: "컨디션 관리", 기타: "그 밖의 시도" };
-export function reportByRules(lessons) {
+export function reportByRules(lessons, ctx) {
   const groups = new Map();
   for (const l of lessons || []) {
     for (const item of splitLines(l.try)) {
@@ -103,21 +103,39 @@ export function reportByRules(lessons) {
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 4)
     .map(([tag, items]) => ({ title: THEME_TITLE[tag] || tag, items: items.slice(0, 6) }));
-  /* 인사이트(규칙): 가장 많이 나온 주제, 반복된 상황/문제 주제, 해볼 것 없이 남은 상황/문제 */
-  const top = themes[0];
-  const probTags = new Map();
-  for (const l of lessons || []) { const t = themeOf(l.problem); if (t) probTags.set(t, (probTags.get(t) || 0) + 1); }
-  const rep = [...probTags.entries()].sort((a, b) => b[1] - a[1])[0];
+  /* 인사이트(규칙) — 실제 문장을 인용해 근거를 보여 줌
+     ① 여러 날 반복된 상황/문제 주제 ② 반복된 문제에 맞는 해볼 것이 없는 빈칸 ③ 여러 날 되풀이한 같은 다짐
+     ④ 핵심 과업(작은 개구리)을 놓친 날과 그날의 상황/문제 (ctx.coreByDay가 있을 때) */
+  const WD = ["일", "월", "화", "수", "목", "금", "토"];
+  const wd = (d) => { const [y, m, dd] = String(d).split("-").map(Number); return WD[new Date(y, m - 1, dd).getDay()]; };
+  const short = (t) => { const x = String(t || "").split(/\n/)[0].replace(/^\s*(?:[-•*·]|\d+[.)])\s*/, "").trim(); return x.length > 28 ? x.slice(0, 27) + "…" : x; };
+  const name = (tag) => THEME_TITLE[tag] || tag;
+  const probs = new Map();   // 주제 → [{date, text}]
+  for (const l of lessons || []) { const t = themeOf(l.problem); if (t) { if (!probs.has(t)) probs.set(t, []); probs.get(t).push(l); } }
+  const tryTags = new Set((lessons || []).flatMap((l) => splitLines(l.try).map((x) => themeOf(x)).filter(Boolean)));
+  const repeated = [...probs.entries()].map(([t, ls]) => ({ t, ls, days: [...new Set(ls.map((l) => l.date))].sort() }))
+    .filter((r) => r.days.length >= 2).sort((a, b) => b.days.length - a.days.length);
+  const pts = [];
+  const r0 = repeated[0];
+  if (r0) pts.push(`${r0.days.map(wd).join("·")}, ${r0.days.length}일에 걸쳐 '${name(r0.t)}' 문제가 나왔어요 — "${short(r0.ls[r0.ls.length - 1].problem)}". 하루의 실수가 아니라 반복되는 패턴이에요.`);
+  const gap = repeated.find((r) => !tryTags.has(r.t)) || [...probs.entries()].map(([t, ls]) => ({ t, ls })).find((r) => !tryTags.has(r.t) && r.ls.length >= 2);
+  if (gap) pts.push(`'${name(gap.t)}' 문제는 ${gap.ls.length}번 적었는데, 이 문제를 겨냥한 해볼 것은 아직 없어요. 다른 쪽 다짐만 늘고 있는지 볼 만해요.`);
+  const tryDays = new Map();
+  for (const l of lessons || []) for (const x of splitLines(l.try)) { const t = themeOf(x); if (t) { if (!tryDays.has(t)) tryDays.set(t, new Map()); tryDays.get(t).set(l.date, x); } }
+  const again = [...tryDays.entries()].filter(([, m]) => m.size >= 2).sort((a, b) => b[1].size - a[1].size)[0];
+  if (again && pts.length < 3) pts.push(`'${name(again[0])}' 쪽 다짐을 ${again[1].size}일 되풀이했어요 — "${short([...again[1].values()].pop())}". 적은 다짐이 실제로 지켜지고 있는지 확인할 때예요.`);
+  const cb = ctx?.coreByDay || {};
+  const missed = Object.entries(cb).filter(([, v]) => v.total > 0 && v.done < v.total).map(([d]) => d).sort();
+  if (missed.length && pts.length < 3) {
+    const withProb = (lessons || []).filter((l) => missed.includes(l.date) && String(l.problem || "").trim());
+    pts.push(withProb.length
+      ? `작은 개구리를 놓친 ${missed.map(wd).join("·")}요일엔 "${short(withProb[0].problem)}" 같은 상황이 함께 있었어요.`
+      : `${missed.map(wd).join("·")}요일엔 작은 개구리(핵심 과업)를 다 먹지 못했어요. 그날 무엇이 끼어들었는지 레슨런엔 남지 않았어요.`);
+  }
   const noTry = (lessons || []).filter((l) => String(l.problem || "").trim() && !String(l.try || "").trim()).length;
-  const days = new Set((lessons || []).map((l) => l.date)).size;
-  const points = [
-    rep && rep[1] >= 2 && `'${THEME_TITLE[rep[0]] || rep[0]}' 관련 상황/문제가 ${rep[1]}번 나왔어요. 같은 원인이 반복되는지 살펴볼 만해요.`,
-    top && top.items.length >= 2 && `해볼 것 ${top.items.length}개가 '${top.title}' 쪽을 향하고 있어요.`,
-    noTry > 0 && `해볼 것 없이 남긴 상황/문제가 ${noTry}개 있어요.`,
-    days && `이번 주엔 ${days}일 레슨런을 남겼어요.`,
-  ].filter(Boolean).slice(0, 3);
+  if (noTry && pts.length < 3) pts.push(`해볼 것 없이 남긴 상황/문제가 ${noTry}개 있어요. 원인까지는 적었지만 다음 행동은 비어 있어요.`);
   const insight = (lessons || []).length
-    ? { headline: top ? `'${top.title}' 이야기가 가장 많은 한 주였어요` : "이번 주 레슨런을 돌아봤어요", points }
+    ? { headline: r0 ? `'${name(r0.t)}' 문제가 ${r0.days.length}일 반복된 한 주였어요` : top ? `해볼 것이 '${top.title}' 쪽으로 모인 한 주였어요` : "이번 주 레슨런을 돌아봤어요", points: pts.slice(0, 3) }
     : null;
   return { themes, insight };
 }
