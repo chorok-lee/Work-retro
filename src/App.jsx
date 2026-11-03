@@ -1534,10 +1534,12 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
     </div>
   );
 }
-/* 우선순위 태그 — 노션 색 그대로, '핵심'만 개구리 초록 (개구리 모양은 할 일 줄의 체크 자리에) */
+/* 우선순위 태그 — 핵심 초록·보통 회색·Backlog 선, 그 밖은 노션 색 (개구리 모양은 할 일 줄의 체크 자리에) */
 function PrioTag({name,color,as,...rest}){
   const core=name==="핵심";
-  const cls=(as==="button"?"btn ":"")+"tag c-"+(core?"green":NOTION_COLORS.includes(color)?color:"default");
+  /* 핵심 = 초록, 보통 = 옅은 회색 채움, Backlog(예전 낮음) = 옅은 회색 선, 그 밖(높음 등) = 노션 색 */
+  const look=core?"c-green":name==="보통"?"c-default":(name==="Backlog"||name==="낮음")?"line":"c-"+(NOTION_COLORS.includes(color)?color:"default");
+  const cls=(as==="button"?"btn ":"")+"tag "+look;
   const body=name;
   return as==="button"?<button className={cls} {...rest}>{body}</button>:<span className={cls} {...rest}>{body}</span>;
 }
@@ -1769,7 +1771,7 @@ function LessonsList({lessons,today,onOpen}){
             <div className="cell-body" style={{alignItems:"flex-start",padding:"12px 16px 12px 0"}}>
               <div className="cell-main">
                 {/* 해볼 것이 레슨런의 핵심 — 상자로 강조하고, 상황/문제는 그 위에 보조 글자로. '해볼 것' 글자 대신 ↳ 표시 */}
-                {l.text&&<div className={l.try?"lprob":"cell-title"} style={{lineHeight:1.4}}><Lines text={l.text}/></div>}
+                {l.text&&<div className="lprob" style={{lineHeight:1.4}}><Lines text={l.text}/></div>}
                 {l.try&&<div className={"ltry"+(l.text?"":" solo")}>
                   <svg className="ltry-ico" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 2v4.5A2.5 2.5 0 0 0 5.5 9H11M8.5 6.5 11 9l-2.5 2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   <div style={{minWidth:0,flex:1}}><span className="sr-only">해볼 것: </span><Lines text={l.try}/></div></div>}
@@ -1934,6 +1936,7 @@ const CSS=`
   .frog-pond{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:104px}
   .pond-big{display:flex;gap:3px}
   .pond-small{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px;max-width:96px}
+  .tag.line{background:transparent;color:var(--label2);box-shadow:inset 0 0 0 1px var(--gray4)}
   .task-frog{display:inline-flex;width:24px;height:24px;margin:0 -1px}
   .big-pile{flex:0 0 auto;display:flex;gap:4px;align-items:flex-end;margin-bottom:2px}
   .rp-big-row{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
