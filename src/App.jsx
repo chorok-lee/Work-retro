@@ -454,6 +454,17 @@ export default function App(){
   };
   const moveTaskTomorrow=(t)=>{const d=nextDay(selDate);
     dropTask(t.id,{method:"PATCH",body:JSON.stringify({id:t.id,date:d})},"내일로 옮겼어요",d);};
+  /* 관리하기 → 못 한 일(핵심 제외, 체크 안 된 것) 전부 다음 날로 */
+  const moveUndone=async(list)=>{
+    const date=selDate, d=nextDay(date), ids=new Set(list.map(t=>t.id)), prev=tasks[date]||[];
+    taskWriteAt.current=Date.now();
+    setTasks(p=>{const o={...p,[date]:(p[date]||[]).filter(t=>!ids.has(t.id))};if(o[d])o[d]=[...o[d],...list.map(t=>({...t,date:d}))];return o;});
+    setToast(`${list.length}개를 ${date===today?"내일":"다음 날"}로 옮겼어요`);
+    if(sync.mode!=="notion") return;
+    try{ for(const t of list) if(!String(t.id).startsWith("tmp")) await api("/api/tasks",{method:"PATCH",body:JSON.stringify({id:t.id,date:d})}); }
+    catch(e){ setTasks(p=>{const o={...p,[date]:prev};if(o[d])o[d]=o[d].filter(t=>!ids.has(t.id));return o;}); setToast(e.message||"노션에 저장하지 못했어요."); }
+    finally{ taskWriteAt.current=Date.now(); }
+  };
   const deleteTask=(t)=>dropTask(t.id,{method:"DELETE",body:JSON.stringify({id:t.id})},"삭제했어요");
 
   /* 큰 개구리 고치기 — 화면(큰 개구리 목록 + 회고용 4주치)을 먼저 바꾸고 노션에 저장, 실패하면 되돌림 */
@@ -713,7 +724,8 @@ export default function App(){
               dbUrl={isNotion?dbLink(tasksDb):""}
               onToggle={(t)=>patchTask(t.id,{done:!t.done})} onRename={(t,title)=>patchTask(t.id,{title})}
               onTomorrow={moveTaskTomorrow} onDelete={deleteTask}
-              onDuplicate={(t)=>{addTask(t.title,t.priority||"");setToast("복제했어요");}}/>
+              onDuplicate={(t)=>{addTask(t.title,t.priority||"");setToast("복제했어요");}}
+              isToday={selDate===today} onMoveUndone={moveUndone}/>
 
             {/* 매일 루틴 — 생산성을 위해 매일 지키는 습관 */}
             {list.length>0&&
@@ -1301,7 +1313,9 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onNextWeek,onD
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone,isToday=true}){
+  const [manage,setManage]=useState(null);   // 관리하기 메뉴 위치
+  const undone=tasks.filter(t=>!t.done&&t.priority!=="핵심");   // 핵심은 그날의 기록이라 옮기지 않음
   const [draft,setDraft]=useState("");
   /* 새 할 일은 우선순위 '낮음'(없으면 마지막 선택지)으로 저장 — 입력 줄엔 태그를 보이지 않고, 추가된 뒤 태그를 눌러 바꿈 */
   const defPrio=(priorities.find(o=>o.name==="Backlog")||priorities.find(o=>o.name==="낮음")||priorities[priorities.length-1])?.name||"";
@@ -1326,7 +1340,7 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
         <span className="group-side">
           {tasks.length>0&&<span className="num">{done}/{tasks.length}</span>}
           {/* 우선순위·마감일 바꾸기, 삭제는 노션 과업 목록에서 */}
-          {dbUrl&&<a className="btn txt" href={dbUrl} target="_blank" rel="noopener noreferrer">관리하기</a>}
+          <button className="btn txt" aria-haspopup="menu" onClick={(e)=>{e.stopPropagation();setManage(e.currentTarget.getBoundingClientRect());}}>관리하기</button>
         </span>
       </div>
       {err&&<div className="banner" style={{margin:"0 0 8px"}}>{err}</div>}
@@ -1365,6 +1379,11 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
           </div>
         </div>
       </div>
+      {manage&&<Popover rect={manage} rows={dbUrl?2:1} label="할 일 관리" onClose={()=>setManage(null)}>
+        {dbUrl&&<a role="menuitem" className="btn pop-row" href={dbUrl} target="_blank" rel="noopener noreferrer" onClick={()=>setManage(null)}>노션 이동하기</a>}
+        <button role="menuitem" className="btn pop-row" disabled={!undone.length} onClick={()=>{setManage(null);onMoveUndone(undone);}}>
+          <span>{isToday?"오늘 못 한 일 내일 하기":"못 한 일 다음 날 하기"}</span><span className="pop-count num">{undone.length||""}</span></button>
+      </Popover>}
       {more&&<Popover rect={more.rect} rows={3} label="할 일 더보기" onClose={()=>setMore(null)}>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onDuplicate(t);}}>복제하기</button>
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onTomorrow(t);}}>내일 하기</button>
@@ -1657,7 +1676,7 @@ const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnt
 });
 
 /* ── 주간 리포트 — 그라데이션 위 네 장(스토리처럼). 오른쪽을 누르면 다음, 왼쪽은 이전 ──
-   1 이번 주 개구리  2 숫자로 본 한 주  3 해볼 것 테마(AI 또는 규칙)  4 다음 주엔 이것 하나만 */
+   1 이번 주 목표·개구리  2 숫자로 본 한 주  3 해볼 것 테마  4 이번 주 인사이트(레슨런 전체 요약, AI 또는 규칙) */
 function useCountUp(target,on,ms=700){
   const [v,setV]=useState(0);
   useEffect(()=>{
@@ -1675,12 +1694,12 @@ function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose})
   const key=`${mon}:${lessons.map(l=>l.id+(l.try||"").length).join(",")}`;
   useEffect(()=>{
     let alive=true;
-    try{const c=JSON.parse(LS.get("wr_reports")||"{}")[key];if(c){setRep(c);return;}}catch{}
-    const items=lessons.filter(l=>l.try).map(l=>({date:l.date,problem:stripBold(l.text),try:stripBold(l.try)}));
+    try{const c=JSON.parse(LS.get("wr_reports2")||"{}")[key];if(c){setRep(c);return;}}catch{}
+    const items=lessons.filter(l=>l.text||l.try).map(l=>({date:l.date,problem:stripBold(l.text),try:stripBold(l.try)}));
     const done=(r)=>{if(!alive)return;setRep(r);
-      try{const all=JSON.parse(LS.get("wr_reports")||"{}");all[key]=r;LS.set("wr_reports",JSON.stringify(all));}catch{}};
+      try{const all=JSON.parse(LS.get("wr_reports2")||"{}");all[key]=r;LS.set("wr_reports2",JSON.stringify(all));}catch{}};
     if(mode==="notion") api("/api/report",{method:"POST",body:JSON.stringify({week:label,lessons:items})})
-      .then(r=>done({themes:r.themes||[],focus:r.focus}),()=>done(reportByRules(items)));
+      .then(r=>done({themes:r.themes||[],insight:r.insight}),()=>done(reportByRules(items)));
     else done(reportByRules(items));
     return()=>{alive=false;};
   },[key]);
@@ -1741,12 +1760,13 @@ function WeeklyReport({mon,label,lessons,big=[],tries,core,rating,mode,onClose})
               </div>))}
         </div>}
         {page===3&&<div key="p3" className="rp-page">
-          <p className="rp-k rp-in" style={st(0)}>다음 주엔 이것 하나만</p>
-          {rep?.focus?<>
-            <h2 className="rp-focus rp-in" style={st(1)}>{rep.focus.text}</h2>
-            <p className="rp-sub rp-in" style={st(2)}>{rep.focus.why}</p></>
+          {/* 마지막 장 — 레슨런 전체(상황/문제 + 해볼 것)를 다시 읽고 정리한 요약과 인사이트 */}
+          <p className="rp-k rp-in" style={st(0)}>이번 주 인사이트</p>
+          {rep?.insight?<>
+            <h2 className="rp-focus rp-in" style={st(1)}>{rep.insight.headline}</h2>
+            {rep.insight.points.map((x,i)=><div key={i} className="rp-card rp-in" style={st(i+2)}>{x}</div>)}</>
             :<div className="rp-card rp-in" style={st(1)}><div className="sk rp-sk" style={{width:"80%"}}/><div className="sk rp-sk" style={{width:"60%",marginTop:10}}/></div>}
-          <button className="btn rp-done rp-in" style={st(3)} onClick={(e)=>{e.stopPropagation();onClose();}}>좋아요</button>
+          <button className="btn rp-done rp-in" style={st((rep?.insight?.points.length||1)+2)} onClick={(e)=>{e.stopPropagation();onClose();}}>좋아요</button>
         </div>}
       </div>
       {page<N-1&&<p className="rp-hint" aria-hidden="true">누르면 다음</p>}
@@ -2023,6 +2043,9 @@ const CSS=`
   .btn.pop-row:active{background:var(--fill2)}
   .btn.prio-blank{flex:0 0 auto;width:40px;height:24px;border-radius:5px}   /* 우선순위가 없을 때: 글자 없이 같은 자리를 눌러 정함 */
   .btn.prio-blank:active{background:var(--fill2)}
+  .pop-count{color:var(--label2);font-size:15px}
+  .btn.pop-row:disabled{opacity:.4}
+  a.btn.pop-row{text-decoration:none}
   .btn.pop-row.danger{color:var(--red)}
   .btn.pop-row+.btn.pop-row.danger{box-shadow:inset 0 .5px 0 var(--sep)}
   .btn.more{flex:0 0 auto;color:var(--label3);width:30px;height:30px;display:flex;align-items:center;justify-content:center;margin-right:-6px}

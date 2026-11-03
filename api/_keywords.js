@@ -103,11 +103,23 @@ export function reportByRules(lessons) {
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 4)
     .map(([tag, items]) => ({ title: THEME_TITLE[tag] || tag, items: items.slice(0, 6) }));
+  /* 인사이트(규칙): 가장 많이 나온 주제, 반복된 상황/문제 주제, 해볼 것 없이 남은 상황/문제 */
   const top = themes[0];
-  const focus = top
-    ? { text: top.items[0], why: top.items.length > 1 ? `이번 주 해볼 것 중 '${top.title}' 이야기가 ${top.items.length}번 나왔어요.` : "이번 주에 가장 먼저 적은 해볼 것이에요." }
+  const probTags = new Map();
+  for (const l of lessons || []) { const t = themeOf(l.problem); if (t) probTags.set(t, (probTags.get(t) || 0) + 1); }
+  const rep = [...probTags.entries()].sort((a, b) => b[1] - a[1])[0];
+  const noTry = (lessons || []).filter((l) => String(l.problem || "").trim() && !String(l.try || "").trim()).length;
+  const days = new Set((lessons || []).map((l) => l.date)).size;
+  const points = [
+    rep && rep[1] >= 2 && `'${THEME_TITLE[rep[0]] || rep[0]}' 관련 상황/문제가 ${rep[1]}번 나왔어요. 같은 원인이 반복되는지 살펴볼 만해요.`,
+    top && top.items.length >= 2 && `해볼 것 ${top.items.length}개가 '${top.title}' 쪽을 향하고 있어요.`,
+    noTry > 0 && `해볼 것 없이 남긴 상황/문제가 ${noTry}개 있어요.`,
+    days && `이번 주엔 ${days}일 레슨런을 남겼어요.`,
+  ].filter(Boolean).slice(0, 3);
+  const insight = (lessons || []).length
+    ? { headline: top ? `'${top.title}' 이야기가 가장 많은 한 주였어요` : "이번 주 레슨런을 돌아봤어요", points }
     : null;
-  return { themes, focus };
+  return { themes, insight };
 }
 
 /* 레슨런 굵게 — 글 안에서는 **굵게** 로 저장(노션에선 bold 주석으로 주고받음). 서버·앱 공용 */
