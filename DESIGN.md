@@ -24,7 +24,7 @@ FrogBox는 **iOS 26 시스템 앱**(건강, 미리 알림)처럼 보이고 동�
 | 우선순위 | `tag c-<색>` (레슨런 주제 태그는 노션에만 저장하고 화면에는 보이지 않음) |
 | 버튼 | 주요 `btn filled`, 작은 선택 `btn pill`(`.blue`), 글자 `btn txt` |
 | 입력·편집 화면 | 전체 화면 `sheet push` + `lcard` / `lfield` (`LessonEditor` — 쓰기와 고치기 공용) |
-| 개구리 | `Frog`(eaten), `FrogPile`(요약 카드의 먹은 개구리 더미), 우선순위 태그 `PrioTag`('핵심'은 초록 + 개구리) — 핵심 과업 표시 |
+| 개구리 | `Frog`(eaten), `FrogPile`(요약 카드의 먹은 개구리 더미), 우선순위 태그 `PrioTag`('핵심'은 초록 + 개구리) — 핵심 과업 표시. 파비콘(`public/favicon.svg`)·홈 화면 아이콘(`apple-touch-icon.png`, 연한 초록 바탕)도 같은 개구리 |
 | 주간 리포트 | `WeeklyReport`(스토리 네 장), 입구 카드 `rp-entry`, 숫자 세기 `useCountUp` |
 | 팝오버 | `Popover`(공용: 누른 자리 아래, 공간이 없으면 위) — 우선순위 선택 `PrioPopover`(아래 '우선순위 기준' 펼침 — 단계마다 정의 + "안 하면?" 판단 질문, 상수 `PRIO_GUIDE`), 할 일 ⋯ 더보기 메뉴 |
 | 상태 | 로딩 `SkeletonList` / `SkeletonCell`, 알림 `banner`, 짧은 결과 `toast` |
