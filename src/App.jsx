@@ -865,7 +865,7 @@ export default function App(){
           if(n&&fromISO(d).getDay()===5) setReportWeek(toISO(mondayOf(fromISO(d))));
           else if(n) setToast("레슨런을 저장했어요");}}/>}
       {reportWeek&&<WeeklyReport {...weekReportData(reportWeek)} mode={sync.mode} onClose={()=>setReportWeek(null)}/>}
-      {editingLesson&&<LessonEditSheet lesson={editingLesson} suggest={suggestTries} onClose={()=>setEditingLesson(null)}
+      {editingLesson&&<LessonEditSheet lesson={editingLesson} suggest={suggestTries} onClose={()=>setEditingLesson(null)} onAdd={addLessons}
         onSave={async(text,tryText)=>{await editLesson(editingLesson.id,text,tryText);setEditingLesson(null);}}
         onDelete={()=>{delLesson(editingLesson.id);setEditingLesson(null);setToast("레슨런을 삭제했어요");}}/>}
       {toast&&<div className="toast fade" role="status">{toast}</div>}
@@ -1673,7 +1673,8 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
             <div className="lfield">
               <div className="lfield-head">
                 <span className="lfield-label">상황/문제</span>
-                {!single&&(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
+                {/* 고치는 중인 레슨런(single의 첫 카드)은 지우지 않음 — 삭제는 맨 아래 '레슨런 삭제'로 */}
+                {!(single&&i===0)&&(cards.length>1||c.p||c.t)&&<button className="btn line-x" aria-label={`레슨런 ${i+1} 지우기`} onClick={()=>remove(c.id)}>×</button>}
               </div>
               <RichField ref={el=>{refs.current[c.id+"p"]=el;}} value={c.p}
                 placeholder="있었던 상황이나 문제를 구체적으로" label={`상황/문제 ${i+1}`}
@@ -1684,7 +1685,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
               <RichField ref={el=>{refs.current[c.id+"t"]=el;}} value={c.t}
                 placeholder={showSug?"직접 쓰거나 아래 제안을 넣어요":"다음에 바꿔 볼 행동"} label={`해볼 것 ${i+1}`}
                 onChange={v=>patch(c.id,{t:v.slice(0,1000)})}
-                onEnter={()=>{if(single)return;
+                onEnter={()=>{
                   if(i===cards.length-1){if(c.p.trim()||c.t.trim())add();}else setFocusId(cards[i+1].id+"p");}}/>
               {showSug&&
                 <div className="lsug" role="group" aria-label="해볼 것 제안">
@@ -1697,7 +1698,7 @@ function LessonEditor({dateLabel,draft,setDraft,suggest,onClose,onSave,onDelete,
                 </div>}
             </div>
           </section>);})}
-        {!single&&<button className="btn ladd" onClick={add}><span className="add-ico" aria-hidden="true"/>레슨런 추가</button>}
+        <button className="btn ladd" onClick={add}><span className="add-ico" aria-hidden="true"/>레슨런 추가</button>
         {onDelete&&<div className="cells" style={{marginTop:24}}>
           <button className="btn cell tap" style={{color:"var(--red)"}} onClick={onDelete}><div className="cell-body">레슨런 삭제</div></button></div>}
       </div>
@@ -1771,12 +1772,16 @@ function RatingTrend({ratings,today}){
 }
 
 /* ── 레슨런 편집 — 작성 화면과 같은 시트에 카드 한 장 ── */
-function LessonEditSheet({lesson,suggest,onClose,onSave,onDelete}){
+/* 레슨런 고치기 — 첫 카드는 이 레슨런, '레슨런 추가'로 붙인 카드는 같은 날짜의 새 레슨런으로 저장 */
+function LessonEditSheet({lesson,suggest,onClose,onSave,onAdd,onDelete}){
   const [draft,setDraft]=useState({cards:[{id:"e"+lesson.id,p:lesson.text||"",t:lesson.try||""}]});
   const d=fromISO(lesson.date);
   return <LessonEditor single dateLabel={`${d.getMonth()+1}월 ${d.getDate()}일 ${wdOf(lesson.date)}요일`} draft={draft} setDraft={setDraft}
     suggest={suggest} onClose={onClose} onDelete={onDelete}
-    onSave={async()=>{const c=draft.cards[0];await onSave(c.p.trim(),c.t.trim());}}/>;
+    onSave={async()=>{const [c,...more]=draft.cards;
+      const items=more.filter(x=>x.p.trim()||x.t.trim()).map(x=>({problem:x.p.trim(),try:x.t.trim()}));
+      if(items.length) await onAdd(items,lesson.date);   // 실패하면 여기서 멈추고 시트는 그대로
+      await onSave(c.p.trim(),c.t.trim());}}/>;
 }
 
 /* 여러 줄 글 — 불릿(- • * ·)·번호(1. 1))로 시작하는 줄이 2개 이상이면 불릿 목록으로, 아니면 줄바꿈만 살림 */
