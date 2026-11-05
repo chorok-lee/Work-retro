@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { extractTags, suggestTriesByRules, splitLines, reportByRules, splitBold, stripBold } from "../api/_keywords.js";
+import { extractTags, suggestTriesByRules, splitLines, reportByRules, splitBold, stripBold, groupTasksByRules, OTHER_WORK } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
    FrogBox — 개구리(핵심 과업)를 먼저 먹는 개인 업무 회고
@@ -681,6 +681,11 @@ export default function App(){
   const bigCur=bigOfWeek(toISO(curMon));
   const weekTaskList=allTasks.filter(t=>t.date>=toISO(curMon)&&t.date<=rangeTo);
   const wkStat=taskStats(weekTaskList);
+  /* 이번 주 한 일 — 끝낸 과업(이번 주 목표 포함), 폐기한 것은 뺌. 막대는 최근 7일 날마다 끝낸 수 */
+  const isDropped=(t)=>t.priority==="폐기"||/^\(폐기\)/.test(t.title||"");
+  const weekDone=[...weekTaskList.filter(t=>t.done&&!isDropped(t)),...bigCur.filter(t=>t.done&&!isDropped(t)).map(t=>({...t,big:true}))]
+    .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const doneByDay=recent7.map(d=>allTasks.filter(t=>t.date===d&&t.done&&!isDropped(t)).length);
 
   /* 주간 리포트 — 금·토·일엔 이번 주, 월~목엔 지난주 */
   const reportMon=toISO([5,6,0].includes(fromISO(today).getDay())?curMon:addDays(curMon,-7));
@@ -794,6 +799,8 @@ export default function App(){
             <FrogCard big={bigCur} core={wkStat.core} loading={tasksLoading} onOpen={()=>openSub("tasks")}/>
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
               value={pace?pace.now:0} unit="회" bars={dayChecks} max={Math.max(list.length,1)} hi={6}/>
+            <SummaryCard icon="done" color="var(--green)" title="한 일" meta="이번 주" loading={tasksLoading} onOpen={()=>openSub("done")}
+              value={weekDone.length} unit="개" bars={doneByDay} max={Math.max(...doneByDay,1)} hi={6}/>
             <SummaryCard icon="star" color="var(--orange)" title="하루 평점" loading={ratingMode==="loading"} meta="이번 주" onOpen={()=>openSub("rating")}
               value={ratingAvg==null?null:ratingAvg.toFixed(1)} unit="점" empty="아직 없어요" stars={ratingAvg}/>
           </div>
@@ -837,6 +844,11 @@ export default function App(){
       {subView==="tasks"&&
         <SubPage title="개구리" onBack={goBack}>
           <TaskDashboard tasks={allTasks} big={bigCur} loading={tasksLoading} today={today} curMon={curMon}/>
+        </SubPage>}
+      {subView==="done"&&
+        <SubPage title="한 일" onBack={goBack}>
+          <WorkLog items={weekDone} loading={tasksLoading} mode={sync.mode} today={today}
+            label={(()=>{const w=weekOfMonth(toISO(curMon));return `${w.m}월 ${w.w}주차`;})()}/>
         </SubPage>}
       {subView==="rating"&&
         <SubPage title="하루 평점" onBack={goBack}>
@@ -1030,6 +1042,54 @@ function TaskDashboard({tasks,big=[],loading,today,curMon}){
   </>);
 }
 
+/* ── 이번 주 한 일 — 끝낸 과업을 프로젝트·과제별로 묶어 보여 줌 (주간 회고 때 무엇을 어떻게 진행했는지)
+   묶기는 /api/worklog(Claude, 없으면 규칙). 같은 목록이면 기기에 저장해 둔 묶음을 바로 씀 ── */
+function WorkLog({items,loading,mode,today,label}){
+  const key=items.map(t=>`${t.id}:${t.title}`).sort().join("|");
+  const [groups,setGroups]=useState(null);
+  useEffect(()=>{
+    if(loading) return;
+    let alive=true;
+    if(!items.length){setGroups([]);return;}
+    try{const c=JSON.parse(LS.get("wr_worklog")||"{}");if(c.key===key){setGroups(c.groups);return;}}catch{}
+    setGroups(null);
+    const list=items.map(t=>({id:t.id,title:t.title,date:t.date}));
+    const done=(g)=>{if(!alive)return;setGroups(g);LS.set("wr_worklog",JSON.stringify({key,groups:g}));};
+    if(mode==="notion") api("/api/worklog",{method:"POST",body:JSON.stringify({week:label,tasks:list})})
+      .then(r=>done(r.groups||[]),()=>done(groupTasksByRules(list)));
+    else done(groupTasksByRules(list));
+    return()=>{alive=false;};
+  },[key,loading]);
+  if(loading||groups==null) return <div style={{marginTop:12}}><SkeletonList rows={3}/><SkeletonList rows={2}/></div>;
+  if(!items.length) return <section className="group" style={{marginTop:12}}><div className="cells"><div className="cell"><div className="cell-body">
+    <span className="cell-sub" style={{margin:0}}>아직 끝낸 일이 없어요</span></div></div></div></section>;
+  const byId=new Map(items.map(t=>[t.id,t]));
+  /* 묶음 밖으로 빠진 과업(묶은 뒤에 새로 끝낸 것 등)은 '그 밖의 일'로 */
+  const used=new Set();
+  const gs=groups.map(g=>({title:g.title,items:g.ids.map(id=>byId.get(id)).filter(t=>t&&!used.has(t.id)&&used.add(t.id))})).filter(g=>g.items.length);
+  const rest=items.filter(t=>!used.has(t.id));
+  if(rest.length){const o=gs.find(g=>g.title===OTHER_WORK);if(o)o.items.push(...rest);else gs.push({title:OTHER_WORK,items:rest});}
+  const tail=(g)=>g.title===OTHER_WORK?2:g.title==="개인"?1:0;
+  gs.sort((a,b)=>tail(a)-tail(b)||b.items.length-a.items.length);
+  const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
+  return(<>
+    {gs.map((g,gi)=>(
+      <section key={g.title+gi} className="group" style={gi===0?{marginTop:12}:undefined}>
+        <div className="group-head small"><h2>{g.title}</h2><span className="group-side num">{g.items.length}개</span></div>
+        <div className="cells">
+          {[...g.items].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0).map(t=>(
+            <div key={t.id} className="cell">
+              {t.big&&<span style={{flex:"0 0 auto"}} aria-label="이번 주 목표"><Frog eaten size={20}/></span>}
+              <div className="cell-body"><div className="cell-main">
+                <div className="cell-title">{t.title}</div>
+                <div className="cell-sub">{t.big?"이번 주 목표":dLabel(t.date)}</div>
+              </div></div>
+            </div>))}
+        </div>
+      </section>))}
+  </>);
+}
+
 /* ── 회고 개구리 카드 — 왼쪽: 큰 개구리·작은 개구리 숫자 나란히 / 오른쪽: 연못처럼 큰 개구리 줄 위, 먹은 작은 개구리 아래 ── */
 function FrogCard({big,core,loading,onOpen}){
   const bigDone=big.filter(t=>t.done).length, small=Math.min(core.done,12);
@@ -1081,6 +1141,7 @@ function Icon({name,size=22}){
   if(name==="bulb") return <svg {...p}><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg>;
   if(name==="chart") return <svg {...p}><path d="M5 20V12M10 20V5M15 20v-9M20 20V8"/></svg>;
   if(name==="flame") return <svg {...p}><path d="M12 21c3.9 0 6.5-2.7 6.5-6.4 0-3.3-2.3-5.6-3.8-7.6-.4 1.9-1.5 3-2.7 3.5.2-2.8-1-5.4-3.4-7.5-.3 3.5-4.1 6.2-4.1 11.6C4.5 18.3 7.6 21 12 21z"/></svg>;
+  if(name==="done") return <svg {...p}><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3 10.8 15l5-5.6"/></svg>;
   if(name==="flag") return <svg {...p}><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>;
   if(name==="frog") return <svg {...p}><path d="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z"/><path d="M9 15c1.8 1 4.2 1 6 0"/></svg>;
   if(name==="star") return <svg {...p} fill="currentColor" stroke="none"><path d={STAR}/></svg>;
