@@ -1051,12 +1051,13 @@ function WorkLog({items,loading,mode,today,label}){
     if(loading) return;
     let alive=true;
     if(!items.length){setGroups([]);return;}
-    try{const c=JSON.parse(LS.get("wr_worklog")||"{}");if(c.key===key){setGroups(c.groups);return;}}catch{}
+    try{const c=JSON.parse(LS.get("wr_worklog")||"{}");if(c.key===key&&c.source==="ai"){setGroups(c.groups);return;}}catch{}
     setGroups(null);
     const list=items.map(t=>({id:t.id,title:t.title,date:t.date}));
-    const done=(g)=>{if(!alive)return;setGroups(g);LS.set("wr_worklog",JSON.stringify({key,groups:g}));};
+    /* Claude가 묶은 결과만 기기에 저장 — 규칙 결과는 다음에 다시 물어봄(키가 생기면 바로 Claude로) */
+    const done=(g,source)=>{if(!alive)return;setGroups(g);if(source==="ai")LS.set("wr_worklog",JSON.stringify({key,groups:g,source}));};
     if(mode==="notion") api("/api/worklog",{method:"POST",body:JSON.stringify({week:label,tasks:list})})
-      .then(r=>done(r.groups||[]),()=>done(groupTasksByRules(list)));
+      .then(r=>done(r.groups||[],r.source),()=>done(groupTasksByRules(list)));
     else done(groupTasksByRules(list));
     return()=>{alive=false;};
   },[key,loading]);
@@ -1858,13 +1859,14 @@ function WeeklyReport({mon,label,lessons,big=[],core,routines=[],coreByDay={},mo
   const key=`${mon}:${lessons.map(l=>l.id+(l.try||"").length).join(",")}`;
   useEffect(()=>{
     let alive=true;
-    try{const c=JSON.parse(LS.get("wr_reports3")||"{}")[key];if(c){setRep(c);return;}}catch{}
+    try{const c=JSON.parse(LS.get("wr_reports4")||"{}")[key];if(c){setRep(c);return;}}catch{}
     const items=lessons.filter(l=>l.text||l.try).map(l=>({date:l.date,problem:stripBold(l.text),try:stripBold(l.try)}));
-    const done=(r)=>{if(!alive)return;setRep(r);
-      try{const all=JSON.parse(LS.get("wr_reports3")||"{}");all[key]=r;LS.set("wr_reports3",JSON.stringify(all));}catch{}};
+    /* Claude가 만든 리포트만 기기에 저장 — 규칙 결과는 다음에 열 때 다시 물어봄 */
+    const done=(r,source)=>{if(!alive)return;setRep(r);if(source!=="ai")return;
+      try{const all=JSON.parse(LS.get("wr_reports4")||"{}");all[key]=r;LS.set("wr_reports4",JSON.stringify(all));}catch{}};
     const ctx={coreByDay,routines:routines.map(r=>({name:r.name,cnt:r.c,prev:r.pc,target:r.t}))};
     if(mode==="notion") api("/api/report",{method:"POST",body:JSON.stringify({week:label,lessons:items,ctx})})
-      .then(r=>done({themes:r.themes||[],insight:r.insight}),()=>done(reportByRules(items,ctx)));
+      .then(r=>done({themes:r.themes||[],insight:r.insight},r.source),()=>done(reportByRules(items,ctx)));
     else done(reportByRules(items,ctx));
     return()=>{alive=false;};
   },[key]);
