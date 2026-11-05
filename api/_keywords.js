@@ -151,3 +151,62 @@ export function splitBold(text) {
   return out;
 }
 export const stripBold = (text) => String(text || "").replace(/\*\*([^*]+?)\*\*/g, "$1");
+
+/* ── 이번 주 한 일 묶기(규칙) — AI가 없거나 실패할 때. 서버·앱 공용
+   제목에서 과제 이름처럼 보이는 낱말을 뽑아, 낱말을 하나라도 같이 쓰는 과업끼리 묶음(union-find).
+   한 건짜리는 '그 밖의 일'로 모음. tasks: [{id, title}] → [{title, ids}] */
+const WORK_ALIAS = [
+  [/hand\s*sign|핸드\s*사인/gi, "핸드사인"],
+  [/결\.?\s*커\.?(?=\s|$|[^가-힣])|결제\s*커뮤니티/g, "결제커뮤니티"],
+  [/마이\s*데이터|마데/g, "마이데이터"],
+  [/n\s*pay|엔페이/gi, "npay"],
+  [/배송\s*지/g, "배송지"],
+  [/cx\s*(?:&|and)?\s*rm|cxrm/gi, "cxrm"],
+  [/선행\s*과제/g, "선행과제"],
+];
+const WORK_STOP = new Set(["문의", "공유", "확인", "작성", "정리", "제작", "요청", "리스트업", "검토", "진행", "완료", "업뎃", "업데이트",
+  "등록", "준비", "만들기", "회신", "논의", "추출", "이해", "도출", "구현", "가능여부", "개선", "개선안", "개선사항", "초안", "시안",
+  "리서치", "레퍼런스", "전체", "플로우", "파트", "오늘", "내일", "하기", "빠르게", "진행되도록", "진행사항", "진행상황", "받기", "타기",
+  "인계", "대표", "소재로", "소재", "가지", "사항", "케이스", "적용", "연결", "기획서", "기획", "프로토타입", "ut", "md", "파일",
+  "f/u", "fu", "과제", "위키", "코멘트", "주간", "지표", "오류", "화면", "문서", "메일", "질문", "담당자", "1안", "2안", "3안", "생각", "하고", "싶은", "일", "건", "및", "후", "수준으로만", "수준", "할", "완성", "the", "and"]);
+const workTokens = (title) => {
+  let s = String(title || "")
+    .replace(/https?:\/\/\S+/g, " ").replace(/\([^)]*\)/g, " ").replace(/@\S+/g, " ")
+    .replace(/~?\s*\d{1,2}:\d{2}\s*(?:부터|까지)?/g, " ").replace(/\[([^\]]*)\]/g, " $1 ");
+  for (const [re, to] of WORK_ALIAS) s = s.replace(re, ` ${to} `);
+  const out = [];
+  for (const raw of s.toLowerCase().split(/[^0-9a-z가-힣]+/)) {
+    const w = strip(raw);
+    if (w.length < 2 || /^\d+$/.test(w) || WORK_STOP.has(w) || STOP.has(w)) continue;
+    if (/(?:하기|했음|하는|해서|하면)$/.test(w)) continue;
+    if (!out.includes(w)) out.push(w);
+  }
+  return out;
+};
+export const OTHER_WORK = "그 밖의 일";
+export function groupTasksByRules(tasks) {
+  const list = (tasks || []).filter((t) => t && t.id);
+  const parent = list.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  /* 과제 이름은 보통 제목 앞쪽에 옴 — 첫 구분자(, + / ' - ') 앞에서 앞의 두 낱말로만 이음(뒤쪽 낱말로 엉뚱한 과제가 이어지지 않게) */
+  const head = (t) => { const s = String(t || "").replace(/\([^)]*\)/g, " "); const m = s.split(/,|\+|\/|\s-\s/)[0]; return workTokens(m).length ? m : s; };
+  const toks = list.map((t) => workTokens(head(t.title)).slice(0, 2));
+  const owner = new Map();   // 낱말 → 처음 쓴 과업
+  toks.forEach((ws, i) => ws.forEach((w) => {
+    if (owner.has(w)) parent[find(i)] = find(owner.get(w)); else owner.set(w, i);
+  }));
+  const groups = new Map();
+  list.forEach((t, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(i); });
+  const out = [], rest = [];
+  for (const idx of groups.values()) {
+    if (idx.length < 2) { rest.push(...idx.map((i) => list[i].id)); continue; }
+    const freq = new Map();
+    idx.forEach((i) => toks[i].forEach((w) => freq.set(w, (freq.get(w) || 0) + 1)));
+    const top = [...freq.entries()].sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)[0][0];
+    const title = { 핸드사인: "핸드사인", 결제커뮤니티: "결제커뮤니티 진입점", 마이데이터: "마이데이터", npay: "Npay", cxrm: "CX·RM", 배송지: "배송지" }[top] || top;
+    out.push({ title, ids: idx.map((i) => list[i].id) });
+  }
+  out.sort((a, b) => b.ids.length - a.ids.length);
+  if (rest.length) out.push({ title: OTHER_WORK, ids: rest });
+  return out;
+}
