@@ -626,14 +626,18 @@ export default function App(){
   const selWk=weekOfMonth(weekStart);
   const dayLabel=selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`;
 
+  /* 주간 회고 — { 월요일: retro } (회고 탭 제목·목록, 오늘 탭 메시지가 함께 씀) */
+  const [weekly,setWeekly]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly")||"{}")||{};}catch{return {};}});
+  const [weeklyLoading,setWeeklyLoading]=useState(false);
   /* 내비게이션 — iOS처럼 큰 제목 + 위쪽 막대(스크롤하면 작은 제목) + 아래 탭 막대 */
   const [scrolled,setScrolled]=useState(false);
   useEffect(()=>{const on=()=>setScrolled(window.scrollY>44);on();window.addEventListener("scroll",on,{passive:true});return()=>window.removeEventListener("scroll",on);},[]);
-  const title=tab==="todo"?(selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`):tab==="lessons"?"레슨런":"회고";
+  const title=tab==="todo"?(selDate===today?"오늘":`${selD.getMonth()+1}월 ${selD.getDate()}일`):tab==="lessons"?"레슨런":tab==="retro"?"회고":"통계";
   const fullDate=`${selD.getMonth()+1}월 ${selD.getDate()}일 ${wdOf(selDate)}요일`;
   const curWk=weekOfMonth(toISO(curMon));
   const subtitle=tab==="todo"?(selDate===today?fullDate:`${wdOf(selDate)}요일`)
-    :tab==="lessons"?(lessonMode==="loading"?"\u00a0":`모두 ${lessons.length}개`):`${curWk.m}월 ${curWk.w}주차`;
+    :tab==="lessons"?(lessonMode==="loading"?"\u00a0":`모두 ${lessons.length}개`)
+    :tab==="retro"?(weeklyLoading&&!Object.keys(weekly).length?"\u00a0":`모두 ${Object.keys(weekly).length}개`):`${curWk.m}월 ${curWk.w}주차`;
   const dayNav=tab==="todo"&&(
     <div className="nav-actions">
       {selDate!==today&&<button className="btn txt" onClick={()=>setSelDate(today)}>오늘</button>}
@@ -646,6 +650,14 @@ export default function App(){
   const lessonNav=tab==="lessons"&&(
     <div className="nav-actions">
       <button className="btn nav-ico" aria-label="레슨런 쓰기" onClick={()=>setEditorDate(workToday)}>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+      </button>
+    </div>
+  );
+  /* 회고 탭 — 새로 쓰기는 위쪽 막대 오른쪽 + (지금 쓸 주: 금~일 이번 주, 월~목 지난주) */
+  const retroNav=tab==="retro"&&(
+    <div className="nav-actions">
+      <button className="btn nav-ico" aria-label="주간 회고 쓰기" onClick={()=>openWeekly(reportMon)}>
         <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
       </button>
     </div>
@@ -713,19 +725,19 @@ export default function App(){
   };
   const lastMon=toISO(addDays(curMon,-7));
   /* 주간 회고 — 쓰는 주는 주간 리포트와 같음(금~일 이번 주, 월~목 지난주). 노션 '주간 회고' DB에 한 주 한 행 */
-  const [weekly,setWeekly]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly")||"{}")||{};}catch{return {};}});   // { 월요일: retro }
-  const [weeklyLoading,setWeeklyLoading]=useState(false);
   useEffect(()=>{LS.set("wr_weekly",JSON.stringify(weekly));},[weekly]);
   useEffect(()=>{
     if(!isNotion) return;
+    /* 모든 주간 회고를 한 번에 — 회고 탭 목록, 지금 주 쓰기/보기, 오늘 탭 '지난주의 내가 보낸 메시지'가 함께 씀 */
     let alive=true; setWeeklyLoading(true);
-    const got=(mon)=>(r)=>{if(alive)setWeekly(p=>{const o={...p};if(r.retro)o[mon]=r.retro;else delete o[mon];return o;});};
-    api(`/api/weekly?week=${reportMon}`).then(got(reportMon),()=>{})
+    api("/api/weekly").then(r=>{if(!alive||!Array.isArray(r?.retros))return;
+      const m={};for(const x of r.retros)if(x.week&&!m[x.week])m[x.week]=x;setWeekly(m);},()=>{})
       .finally(()=>{if(alive)setWeeklyLoading(false);});
-    /* 지난주 회고의 '다음 주에 해볼 것' — 오늘 탭 맨 아래 '지난주의 내가 보낸 메시지' (금~일엔 쓰는 주와 다름) */
-    if(lastMon!==reportMon) api(`/api/weekly?week=${lastMon}`).then(got(lastMon),()=>{});
     return()=>{alive=false;};
-  },[isNotion,reportMon,lastMon]);
+  },[isNotion]);
+  /* 열려 있는 주간 회고의 주 — 비어 있으면 지금 쓸 주 */
+  const [weeklyMon,setWeeklyMon]=useState(null);
+  const openWeekly=(mon)=>{setWeeklyMon(mon);openSub("weekly");};
   const [msgOpen,setMsgOpen]=useState(false);
   const lastMsg=(weekly[lastMon]?.next||"").trim();
   const [weeklyDrafts,setWeeklyDrafts]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly_drafts")||"{}")||{};}catch{return {};}});
@@ -791,7 +803,7 @@ export default function App(){
         <div className="navbar-in">
           <span/>
           <span className="nav-title" aria-hidden={!scrolled}>{title}</span>
-          <div style={{justifySelf:"end"}}>{dayNav}{lessonNav}</div>
+          <div style={{justifySelf:"end"}}>{dayNav}{lessonNav}{retroNav}</div>
         </div>
       </header>
 
@@ -814,7 +826,7 @@ export default function App(){
 
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
             <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
-              onOpenWeekly={()=>{setTab("review");openSub("weekly");}}
+              onOpenWeekly={()=>{setTab("retro");openWeekly(reportMon);}}
               loading={isNotion&&tasks[selDate]===undefined&&!tasksErr}
               priorities={isNotion?priorities:PRIOS.map((name,i)=>({name,color:["red","yellow","green","default"][i]}))}
               onPriority={(t,name)=>{const src=isNotion?priorities:PRIOS.map((n,i)=>({name:n,color:["red","yellow","green","default"][i]}));
@@ -871,21 +883,8 @@ export default function App(){
           </div>
         )}
 
-        {!booting&&tab==="review"&&(
+        {!booting&&tab==="stats"&&(
           <div className="fade summary">
-            {/* 주간 회고 쓰기 — 금~일엔 이번 주, 월~목엔 지난주 */}
-            <div className="cells" style={{marginTop:12}}>
-              <button className="btn cell tap" onClick={()=>openSub("weekly")}>
-                <span className="lead-ico" style={{background:"var(--purple)"}}><Icon name="pencil" size={16}/></span>
-                <div className="cell-body">
-                  <span className="cell-title">{weekReportData(reportMon).label} 회고 {weekly[reportMon]?"보기":"쓰기"}</span>
-                  <span style={{display:"flex",alignItems:"center",gap:8}}>
-                    {!weekly[reportMon]&&weeklyDrafts[reportMon]&&<span className="cell-value" style={{fontSize:15}}>작성 중</span>}
-                    <span className="disclosure"><Chevron size={14}/></span>
-                  </span>
-                </div>
-              </button>
-            </div>
             {/* 개구리 먹기 — 큰 개구리(이번 주 목표)와 작은 개구리(그날의 핵심 과업)를 한 카드에 */}
             <FrogCard big={bigCur} core={wkStat.core} loading={tasksLoading} onOpen={()=>openSub("tasks")}/>
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
@@ -900,20 +899,27 @@ export default function App(){
         {!booting&&tab==="lessons"&&(
           <div className="fade">
             {lessonNote&&<div className="banner">{lessonNote}</div>}
+            {lessonMode==="loading"?<SkeletonList rows={4} tall/>
+              :<LessonsList lessons={lessons} today={today} onOpen={setEditingLesson}/>}
+          </div>
+        )}
+
+        {!booting&&tab==="retro"&&(
+          <div className="fade">
             {lessonMode!=="loading"&&reportHas&&
               <button className="btn rp-entry" onClick={()=>setReportWeek(reportMon)}>
                 <span className="rp-entry-k">주간 리포트</span>
                 <span className="rp-entry-t">{weekReportData(reportMon).label} 해볼 것 돌아보기</span>
                 <span className="rp-entry-go" aria-hidden="true"><Chevron size={16}/></span>
               </button>}
-            {lessonMode==="loading"?<SkeletonList rows={4} tall/>
-              :<LessonsList lessons={lessons} today={today} onOpen={setEditingLesson}/>}
+            <RetroList weekly={weekly} loading={weeklyLoading&&!Object.keys(weekly).length} cur={reportMon}
+              curLabel={weekReportData(reportMon).label} drafting={!!weeklyDrafts[reportMon]} onOpen={openWeekly}/>
           </div>
         )}
       </main>
 
       <nav className="tabbar" role="tablist" aria-label="화면">
-        {[["todo","오늘","check"],["review","회고","chart"],["lessons","레슨런","bulb"]].map(([k,l,ic])=>(
+        {[["todo","오늘","check"],["stats","통계","chart"],["lessons","레슨런","bulb"],["retro","회고","pencil"]].map(([k,l,ic])=>(
           <button key={k} role="tab" aria-selected={tab===k} className={"btn tab"+(tab===k?" on":"")}
             onClick={()=>{setTab(k);window.scrollTo({top:0});}}>
             <Icon name={ic} size={25}/><span>{l}</span>
@@ -936,11 +942,11 @@ export default function App(){
         <SubPage title="개구리" onBack={goBack}>
           <TaskDashboard tasks={allTasks} big={bigCur} loading={tasksLoading} today={today} curMon={curMon}/>
         </SubPage>}
-      {subView==="weekly"&&
-        <WeeklyRetro mon={reportMon} saved={weekly[reportMon]} loading={weeklyLoading&&!weekly[reportMon]}
-          draft={weeklyDrafts[reportMon]} setDraft={(v)=>setWeeklyDrafts(p=>({...p,[reportMon]:v}))}
-          refData={weeklyRef(reportMon)} mode={sync.mode} today={today} allTasks={allTasks}
-          onClose={goBack} onSave={async(form)=>{await saveWeekly(reportMon,form);goBack();}}/>}
+      {subView==="weekly"&&(()=>{const wm=weeklyMon||reportMon;return(
+        <WeeklyRetro key={wm} mon={wm} saved={weekly[wm]} loading={weeklyLoading&&!weekly[wm]} backLabel={tab==="todo"?"오늘":tab==="stats"?"통계":"회고"}
+          draft={weeklyDrafts[wm]} setDraft={(v)=>setWeeklyDrafts(p=>({...p,[wm]:v}))}
+          refData={weeklyRef(wm)} mode={sync.mode} today={today} allTasks={allTasks}
+          onClose={goBack} onSave={async(form)=>{await saveWeekly(wm,form);goBack();}}/>);})()}
       {subView==="done"&&
         <SubPage title="한 일" onBack={goBack}>
           <WorkLog items={weekDone} loading={tasksLoading} mode={sync.mode} today={today}
@@ -953,7 +959,7 @@ export default function App(){
             <RatingHistory ratings={ratings} today={today}/></>}
         </SubPage>}
       {detailItem&&<ItemDetail st={itemStats(detailItem)} today={today} isNotion={isNotion}
-        backLabel={subView==="routine"?"루틴":"회고"} onClose={goBack}/>}
+        backLabel={subView==="routine"?"루틴":"통계"} onClose={goBack}/>}
       {editorDate&&<LessonEditor dateLabel={`${fromISO(editorDate).getMonth()+1}월 ${fromISO(editorDate).getDate()}일 ${wdOf(editorDate)}요일`}
         draft={draftOf(editorDate)} setDraft={(v)=>setDraftFor(editorDate,v)} suggest={suggestTries} onClose={()=>setEditorDate(null)}
         onSave={async()=>{const d=editorDate;const n=await saveDraft(d);setEditorDate(null);
@@ -977,7 +983,7 @@ function SubPage({title,onBack,children}){
     <div role="dialog" aria-modal="true" aria-label={title} className="sheet push" style={{zIndex:80}}>
       <header className="navbar scrolled">
         <div className="navbar-in">
-          <button className="btn glass-ico" onClick={onBack} aria-label="회고로 돌아가기"><Chevron dir="l" size={20}/></button>
+          <button className="btn glass-ico" onClick={onBack} aria-label="통계로 돌아가기"><Chevron dir="l" size={20}/></button>
           <span className="nav-title">{title}</span>
           <span/>
         </div>
@@ -1139,12 +1145,58 @@ function TaskDashboard({tasks,big=[],loading,today,curMon,noHistory}){
   </>);
 }
 
+/* ── 회고 탭 — 주간 회고 목록(최근 주가 위). 지금 쓸 주를 아직 안 썼으면 맨 위에 '쓰기' 줄.
+   줄 = 주차 + 보조 한 줄('다음 주에 해볼 것' 첫 줄, 없으면 기간) + 오른쪽 평균 별점. 누르면 그 주 회고 시트 ── */
+function RetroList({weekly,loading,cur,curLabel,drafting,onOpen}){
+  if(loading) return <div style={{marginTop:12}}><SkeletonList rows={4}/></div>;
+  const weeks=Object.values(weekly).filter(r=>r?.week).sort((a,b)=>a.week<b.week?1:a.week>b.week?-1:0);
+  const range=(mon)=>{const d0=fromISO(mon),d6=addDays(d0,6);return `${d0.getMonth()+1}월 ${d0.getDate()}일 ~ ${d6.getMonth()!==d0.getMonth()?`${d6.getMonth()+1}월 `:""}${d6.getDate()}일`;};
+  const label=(mon)=>{const w=weekOfMonth(mon);return `${w.m}월 ${w.w}주차`;};
+  const avg=(r)=>{const v=WEEKLY_ITEMS.map(k=>r.scores?.[k]).filter(Boolean);return v.length?v.reduce((a,b)=>a+b,0)/v.length:null;};
+  const firstLine=(t)=>stripBold(String(t||"").split(/\n/).map(l=>l.replace(/^\s*(?:[-•*·]|\d+[.)])\s*/,"").trim()).find(Boolean)||"");
+  return(<>
+    {!weekly[cur]&&
+      <div className="cells" style={{marginTop:12}}>
+        <button className="btn cell tap" onClick={()=>onOpen(cur)}>
+          <span className="lead-ico" style={{background:"var(--purple)"}}><Icon name="pencil" size={16}/></span>
+          <div className="cell-body">
+            <span className="cell-title">{curLabel} 회고 쓰기</span>
+            <span style={{display:"flex",alignItems:"center",gap:8}}>
+              {drafting&&<span className="cell-value" style={{fontSize:15}}>작성 중</span>}
+              <span className="disclosure"><Chevron size={14}/></span>
+            </span>
+          </div>
+        </button>
+      </div>}
+    {weeks.length
+      ? <section className="group">
+          <div className="group-head small"><h2>주간 회고</h2></div>
+          <div className="cells">
+            {weeks.map(r=>{const a=avg(r),sub=firstLine(r.next)||range(r.week);return(
+              <button key={r.week} className="btn cell tap" onClick={()=>onOpen(r.week)}>
+                <div className="cell-body">
+                  <div className="cell-main">
+                    <div className="cell-title">{label(r.week)}</div>
+                    <div className="cell-sub" style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sub}</div>
+                  </div>
+                  <span style={{display:"flex",alignItems:"center",gap:8,flex:"0 0 auto"}}>
+                    {a!=null&&<span className="cell-value num retro-avg" aria-label={`평균 ${a.toFixed(1)}점`}><StarSvg size={13}/>{a.toFixed(1)}</span>}
+                    <span className="disclosure"><Chevron size={14}/></span>
+                  </span>
+                </div>
+              </button>);})}
+          </div>
+        </section>
+      : weekly[cur]?null:<p className="group-foot" style={{marginTop:20}}>아직 주간 회고가 없어요</p>}
+  </>);
+}
+
 /* ── 주간 회고 쓰기 — 항목(성과·시간 관리·업무량·멘탈·체력)마다 별점 + 메모, 그 외, 다음 주에 해볼 것.
    맨 위 참고 타일을 누르면 쓰던 화면을 떠나지 않고 그 주 기록을 모달로 봄 ── */
 const WEEKLY_FROG="주간 회고 쓰기";   // 일요일 자동 개구리 이름
 const REF_TABS=[["frog","개구리"],["done","한 일"],["routine","루틴"],["rating","평점"],["lesson","레슨런"]];
 const emptyWeekly=()=>({scores:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,null])),notes:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,""])),other:"",next:""});
-function WeeklyRetro({mon,saved,loading,draft,setDraft,refData,mode,today,allTasks,onClose,onSave}){
+function WeeklyRetro({mon,saved,loading,draft,setDraft,refData,mode,today,allTasks,onClose,onSave,backLabel="회고"}){
   const [ref,setRef]=useState(null);
   const [busy,setBusy]=useState(false);
   /* 뒤에 깔린 화면까지 닫히지 않도록 먼저 받아서 멈춤 — 참고 모달이 열려 있으면 모달이 먼저 받음 */
@@ -1186,7 +1238,7 @@ function WeeklyRetro({mon,saved,loading,draft,setDraft,refData,mode,today,allTas
     <div role="dialog" aria-modal="true" aria-label={`${R.label} 회고`} className="sheet push" style={{zIndex:85,overflowY:ref?"hidden":undefined}}>
       <header className="navbar scrolled">
         <div className="navbar-in">
-          <button className="btn glass-ico" onClick={onClose} aria-label="회고로 돌아가기"><Chevron dir="l" size={20}/></button>
+          <button className="btn glass-ico" onClick={onClose} aria-label={`${backLabel}로 돌아가기`}><Chevron dir="l" size={20}/></button>
           <span className="nav-title">{R.label} 회고</span>
           <button className="btn txt strong" style={{justifySelf:"end"}} disabled={!filled||busy||loading} onClick={save}>{busy?"저장 중":"저장"}</button>
         </div>
@@ -1513,7 +1565,7 @@ function ItemRow({st,today,onOpen}){
 
 /* ── 루틴 상세 ── 잔디 · 통계 · 월별 기록 (iOS 푸시 화면처럼) */
 const PAGE_WEEKS=22;
-function ItemDetail({st,today,isNotion,onClose,backLabel="회고"}){
+function ItemDetail({st,today,isNotion,onClose,backLabel="통계"}){
   const [page,setPage]=useState(0);
   const maxPage=Math.floor(52/PAGE_WEEKS);
   const endISO=toISO(addDays(mondayOf(fromISO(today)),-7*PAGE_WEEKS*page+6));
@@ -1600,9 +1652,11 @@ function useFlip(ref){
 
 /* 할 일 정렬 — 고정 → 안 한 일 → 우선순위(핵심·높음·보통·Backlog·없음), 같은 묶음 안에선 순서(order), 없으면 불러온 순서 */
 const P_RANK={핵심:0,높음:1,보통:2,Backlog:3,낮음:3};
-const sameGroup=(a,b)=>!!a.pinned===!!b.pinned&&!!a.done===!!b.done&&(P_RANK[a.priority]??4)===(P_RANK[b.priority]??4);
+const sameGroup=(a,b)=>stageOf(a)===stageOf(b)&&(P_RANK[a.priority]??4)===(P_RANK[b.priority]??4);
+/* 정렬 단계 — 고정 → 핵심(오늘의 개구리는 끝내도 위에 남음) → 안 한 일 → 끝낸 일 */
+const stageOf=(t)=>t.pinned?(t.done?.5:0):t.priority==="핵심"?1:t.done?3:2;
 function sortTasks(list){
-  return list.map((t,i)=>({t,i})).sort((a,b)=>(b.t.pinned?1:0)-(a.t.pinned?1:0)||(a.t.done?1:0)-(b.t.done?1:0)
+  return list.map((t,i)=>({t,i})).sort((a,b)=>stageOf(a.t)-stageOf(b.t)
     ||(P_RANK[a.t.priority]??4)-(P_RANK[b.t.priority]??4)||(a.t.order??1e6+a.i)-(b.t.order??1e6+b.i)).map(({t})=>t);
 }
 
@@ -2564,6 +2618,8 @@ const CSS=`
   .btn.ref-tile:active{opacity:.6}
   .ref-k{font-size:12px;font-weight:500;color:var(--label2);white-space:nowrap}
   .ref-v{display:flex;align-items:center;gap:3px;font-size:17px;font-weight:600;color:var(--label);white-space:nowrap}
+  .retro-avg{display:flex;align-items:center;gap:3px;font-size:15px}
+  .retro-avg path{fill:var(--orange)}
   .wr-stars{display:flex;gap:0;margin:-6px -4px -6px 0}
   .ref-back{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.32);display:flex;align-items:flex-end;justify-content:center;animation:fade .2s}
   .ref-sheet{width:100%;max-width:600px;height:76vh;height:76dvh;background:var(--bg);border-radius:26px 26px 0 0;display:flex;flex-direction:column;
