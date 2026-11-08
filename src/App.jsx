@@ -740,6 +740,40 @@ export default function App(){
     setWeeklyDrafts(p=>{const o={...p};delete o[mon];return o;});
     setToast("주간 회고를 저장했어요");
   };
+  /* 일요일엔 '주간 회고 쓰기'를 그날의 개구리(핵심)로 자동 생성 — 오늘 목록을 노션에서 받은 뒤, 같은 이름이 없고
+     이 기기에서 그 일요일에 아직 시도하지 않았을 때만(지우면 다시 안 생김) */
+  useEffect(()=>{
+    if(!isNotion||fromISO(today).getDay()!==0) return;
+    const list=tasks[today]; if(!Array.isArray(list)) return;
+    if(LS.get("wr_weekly_frog")===today) return;
+    LS.set("wr_weekly_frog",today);
+    if(list.some(t=>t.title===WEEKLY_FROG)) return;
+    const core=priorities.find(o=>o.name==="핵심");
+    const tmp={id:"tmp"+Date.now(),title:WEEKLY_FROG,done:false,priority:core?"핵심":"",priorityColor:core?.color||"",url:""};
+    taskWriteAt.current=Date.now();
+    setTasks(p=>({...p,[today]:[...(p[today]||[]),tmp]}));
+    api("/api/tasks",{method:"POST",body:JSON.stringify({title:WEEKLY_FROG,date:today,...(core?{priority:"핵심"}:{})})})
+      .then(r=>setTasks(p=>({...p,[today]:(p[today]||[]).map(t=>t.id===tmp.id?r.task:t)})),
+        ()=>setTasks(p=>({...p,[today]:(p[today]||[]).filter(t=>t.id!==tmp.id)})))
+      .finally(()=>{taskWriteAt.current=Date.now();});
+  },[isNotion,today,tasks[today],priorities]);
+  /* 그 주 회고가 저장돼 있으면 그 주 일요일의 '주간 회고 쓰기'를 먹은 개구리로 (자동 처리는 과업마다 한 번 — 직접 체크를 풀면 그대로 둠) */
+  const frogAutoDone=useRef(new Set());
+  useEffect(()=>{
+    if(!isNotion) return;
+    for(const mon of [reportMon,lastMon]){
+      if(!weekly[mon]) continue;
+      const sun=toISO(addDays(fromISO(mon),6));
+      const t=(tasks[sun]||[]).find(x=>x.title===WEEKLY_FROG&&!x.done&&!String(x.id).startsWith("tmp"));
+      if(!t||frogAutoDone.current.has(t.id)) continue;
+      frogAutoDone.current.add(t.id);
+      taskWriteAt.current=Date.now();
+      setTasks(p=>({...p,[sun]:(p[sun]||[]).map(x=>x.id===t.id?{...x,done:true}:x)}));
+      api("/api/tasks",{method:"PATCH",body:JSON.stringify({id:t.id,done:true})})
+        .catch(()=>setTasks(p=>({...p,[sun]:(p[sun]||[]).map(x=>x.id===t.id?{...x,done:false}:x)})))
+        .finally(()=>{taskWriteAt.current=Date.now();});
+    }
+  },[isNotion,weekly,tasks,reportMon,lastMon]);
   /* 참고 — 그 주 기록 (회고 쓰기 화면 맨 위 타일과 참고 모달) */
   const weeklyRef=(mon)=>{
     const r=weekReportData(mon), ds=weekDatesFrom(fromISO(mon));
@@ -780,6 +814,7 @@ export default function App(){
 
             {/* 오늘 할 일 — 그날 마감인 구체적인 과업 (노션 과업 DB와 동기화) */}
             <TasksSection title="할 일" tasks={tasks[selDate]||[]} err={isNotion?tasksErr:""} onAdd={addTask}
+              onOpenWeekly={()=>{setTab("review");openSub("weekly");}}
               loading={isNotion&&tasks[selDate]===undefined&&!tasksErr}
               priorities={isNotion?priorities:PRIOS.map((name,i)=>({name,color:["red","yellow","green","default"][i]}))}
               onPriority={(t,name)=>{const src=isNotion?priorities:PRIOS.map((n,i)=>({name:n,color:["red","yellow","green","default"][i]}));
@@ -1106,6 +1141,7 @@ function TaskDashboard({tasks,big=[],loading,today,curMon,noHistory}){
 
 /* ── 주간 회고 쓰기 — 항목(성과·시간 관리·업무량·멘탈·체력)마다 별점 + 메모, 그 외, 다음 주에 해볼 것.
    맨 위 참고 타일을 누르면 쓰던 화면을 떠나지 않고 그 주 기록을 모달로 봄 ── */
+const WEEKLY_FROG="주간 회고 쓰기";   // 일요일 자동 개구리 이름
 const REF_TABS=[["frog","개구리"],["done","한 일"],["routine","루틴"],["rating","평점"],["lesson","레슨런"]];
 const emptyWeekly=()=>({scores:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,null])),notes:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,""])),other:"",next:""});
 function WeeklyRetro({mon,saved,loading,draft,setDraft,refData,mode,today,allTasks,onClose,onSave}){
@@ -1636,7 +1672,7 @@ function BigFrogs({items,loading,carry=[],onAdd,onToggle,onRename,onMove,onDelet
 /* ── 오늘 할 일 ── 둥근 체크 = 노션 '완료', 이름을 누르면 바로 고침, 맨 아래에서 새로 추가 (미리 알림 앱처럼) */
 /* 노션 선택지 색 이름 → 태그 색 (노션 팔레트와 같은 이름만 받음) */
 const NOTION_COLORS=["default","gray","brown","orange","yellow","green","blue","purple","pink","red"];
-function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone,onPin,onMove}){
+function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggle,onRename,onPriority,onDuplicate,onTomorrow,onDelete,onMoveUndone,onPin,onMove,onOpenWeekly}){
   const sorted=sortTasks(tasks);
   const listRef=useRef(null); useFlip(listRef);
   const groupOf=(t)=>sorted.filter(x=>sameGroup(x,t));
@@ -1713,7 +1749,8 @@ function TasksSection({title,tasks,err,dbUrl,loading,priorities=[],onAdd,onToggl
           <span>못 한 일 미루기</span><span className="pop-count num">{undone.length||""}</span></button>
       </Popover>}
       {more&&(()=>{const g=groupOf(more.t), gi=g.findIndex(x=>x.id===more.t.id), up=gi>0, down=gi<g.length-1;return(
-      <Popover rect={more.rect} rows={4+(up?1:0)+(down?1:0)} label="할 일 더보기" onClose={()=>setMore(null)}>
+      <Popover rect={more.rect} rows={4+(up?1:0)+(down?1:0)+(more.t.title===WEEKLY_FROG&&onOpenWeekly?1:0)} label="할 일 더보기" onClose={()=>setMore(null)}>
+        {more.t.title===WEEKLY_FROG&&onOpenWeekly&&<button role="menuitem" className="btn pop-row" onClick={()=>{setMore(null);onOpenWeekly();}}>회고 쓰러 가기</button>}
         <button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onPin(t);}}>{more.t.pinned?"고정 해제":"맨 위에 고정"}</button>
         {up&&<button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onMove(g,t,-1);}}>위로 올리기</button>}
         {down&&<button role="menuitem" className="btn pop-row" onClick={()=>{const t=more.t;setMore(null);onMove(g,t,1);}}>아래로 내리기</button>}
