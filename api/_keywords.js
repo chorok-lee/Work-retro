@@ -210,3 +210,6 @@ export function groupTasksByRules(tasks) {
   if (rest.length) out.push({ title: OTHER_WORK, ids: rest });
   return out;
 }
+
+/* 주간 회고 항목 — 점수(1~5) + 메모. 노션 '주간 회고' DB 속성 이름과 같음(메모는 '<항목> 메모'). 서버·앱 공용 */
+export const WEEKLY_ITEMS = ["성과", "시간 관리", "업무량", "멘탈", "체력"];

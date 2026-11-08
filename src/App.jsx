@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { extractTags, suggestTriesByRules, splitLines, reportByRules, splitBold, stripBold, groupTasksByRules, OTHER_WORK } from "../api/_keywords.js";
+import { extractTags, suggestTriesByRules, splitLines, reportByRules, splitBold, stripBold, groupTasksByRules, OTHER_WORK, WEEKLY_ITEMS } from "../api/_keywords.js";
 
 /* ────────────────────────────────────────────────────────────
    FrogBox — 개구리(핵심 과업)를 먼저 먹는 개인 업무 회고
@@ -683,8 +683,10 @@ export default function App(){
   const wkStat=taskStats(weekTaskList);
   /* 이번 주 한 일 — 끝낸 과업(이번 주 목표 포함), 폐기한 것은 뺌. 막대는 최근 7일 날마다 끝낸 수 */
   const isDropped=(t)=>t.priority==="폐기"||/^\(폐기\)/.test(t.title||"");
-  const weekDone=[...weekTaskList.filter(t=>t.done&&!isDropped(t)),...bigCur.filter(t=>t.done&&!isDropped(t)).map(t=>({...t,big:true}))]
-    .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const doneOfWeek=(mon)=>{const sun=toISO(addDays(fromISO(mon),6));
+    return [...allTasks.filter(t=>t.date>=mon&&t.date<=sun&&t.done&&!isDropped(t)),...bigOfWeek(mon).filter(t=>t.done&&!isDropped(t)).map(t=>({...t,big:true}))]
+      .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);};
+  const weekDone=doneOfWeek(toISO(curMon));
   const doneByDay=recent7.map(d=>allTasks.filter(t=>t.date===d&&t.done&&!isDropped(t)).length);
 
   /* 주간 리포트 — 금·토·일엔 이번 주, 월~목엔 지난주 */
@@ -708,6 +710,37 @@ export default function App(){
     });
     const coreByDay={}; ds.forEach(d=>{const c=allTasks.filter(t=>t.date===d&&t.priority==="핵심");if(c.length)coreByDay[d]={done:c.filter(t=>t.done).length,total:c.length};});
     return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,big:bigOfWeek(mon),core,routines,coreByDay};
+  };
+  /* 주간 회고 — 쓰는 주는 주간 리포트와 같음(금~일 이번 주, 월~목 지난주). 노션 '주간 회고' DB에 한 주 한 행 */
+  const [weekly,setWeekly]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly")||"{}")||{};}catch{return {};}});   // { 월요일: retro }
+  const [weeklyLoading,setWeeklyLoading]=useState(false);
+  useEffect(()=>{LS.set("wr_weekly",JSON.stringify(weekly));},[weekly]);
+  useEffect(()=>{
+    if(!isNotion) return;
+    let alive=true; setWeeklyLoading(true);
+    api(`/api/weekly?week=${reportMon}`).then(r=>{if(alive)setWeekly(p=>{const o={...p};if(r.retro)o[reportMon]=r.retro;else delete o[reportMon];return o;});},()=>{})
+      .finally(()=>{if(alive)setWeeklyLoading(false);});
+    return()=>{alive=false;};
+  },[isNotion,reportMon]);
+  const [weeklyDrafts,setWeeklyDrafts]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly_drafts")||"{}")||{};}catch{return {};}});
+  useEffect(()=>{LS.set("wr_weekly_drafts",JSON.stringify(weeklyDrafts));},[weeklyDrafts]);
+  const saveWeekly=async(mon,form)=>{
+    const prev=weekly[mon];
+    setWeekly(p=>({...p,[mon]:{...(prev||{}),week:mon,...form}}));
+    if(isNotion){
+      try{const r=await api("/api/weekly",{method:"PUT",body:JSON.stringify({week:mon,...form})});if(r?.retro)setWeekly(p=>({...p,[mon]:r.retro}));}
+      catch(e){setWeekly(p=>{const o={...p};if(prev)o[mon]=prev;else delete o[mon];return o;});setToast(e.message||"주간 회고를 저장하지 못했어요.");throw e;}
+    }
+    setWeeklyDrafts(p=>{const o={...p};delete o[mon];return o;});
+    setToast("주간 회고를 저장했어요");
+  };
+  /* 참고 — 그 주 기록 (회고 쓰기 화면 맨 위 타일과 참고 모달) */
+  const weeklyRef=(mon)=>{
+    const r=weekReportData(mon), ds=weekDatesFrom(fromISO(mon));
+    const rated=ds.map(d=>({d,v:ratings[d]||0}));
+    const rs=rated.filter(x=>x.v);
+    return {...r,done:doneOfWeek(mon),ratingDays:rated,ratingAvg:rs.length?rs.reduce((a,b)=>a+b.v,0)/rs.length:null,
+      checks:r.routines.reduce((n,x)=>n+x.c,0)};
   };
   const reportHas=lessons.some(l=>l.try&&l.date>=reportMon&&l.date<=toISO(addDays(fromISO(reportMon),6)));
 
@@ -795,6 +828,19 @@ export default function App(){
 
         {!booting&&tab==="review"&&(
           <div className="fade summary">
+            {/* 주간 회고 쓰기 — 금~일엔 이번 주, 월~목엔 지난주 */}
+            <div className="cells" style={{marginTop:12}}>
+              <button className="btn cell tap" onClick={()=>openSub("weekly")}>
+                <span className="lead-ico" style={{background:"var(--purple)"}}><Icon name="pencil" size={16}/></span>
+                <div className="cell-body">
+                  <span className="cell-title">{weekReportData(reportMon).label} 회고 {weekly[reportMon]?"보기":"쓰기"}</span>
+                  <span style={{display:"flex",alignItems:"center",gap:8}}>
+                    {!weekly[reportMon]&&weeklyDrafts[reportMon]&&<span className="cell-value" style={{fontSize:15}}>작성 중</span>}
+                    <span className="disclosure"><Chevron size={14}/></span>
+                  </span>
+                </div>
+              </button>
+            </div>
             {/* 개구리 먹기 — 큰 개구리(이번 주 목표)와 작은 개구리(그날의 핵심 과업)를 한 카드에 */}
             <FrogCard big={bigCur} core={wkStat.core} loading={tasksLoading} onOpen={()=>openSub("tasks")}/>
             <SummaryCard icon="check" color="var(--blue)" title="루틴" meta="이번 주" onOpen={()=>openSub("routine")}
@@ -845,6 +891,11 @@ export default function App(){
         <SubPage title="개구리" onBack={goBack}>
           <TaskDashboard tasks={allTasks} big={bigCur} loading={tasksLoading} today={today} curMon={curMon}/>
         </SubPage>}
+      {subView==="weekly"&&
+        <WeeklyRetro mon={reportMon} saved={weekly[reportMon]} loading={weeklyLoading&&!weekly[reportMon]}
+          draft={weeklyDrafts[reportMon]} setDraft={(v)=>setWeeklyDrafts(p=>({...p,[reportMon]:v}))}
+          refData={weeklyRef(reportMon)} mode={sync.mode} today={today} allTasks={allTasks}
+          onClose={goBack} onSave={async(form)=>{await saveWeekly(reportMon,form);goBack();}}/>}
       {subView==="done"&&
         <SubPage title="한 일" onBack={goBack}>
           <WorkLog items={weekDone} loading={tasksLoading} mode={sync.mode} today={today}
@@ -975,7 +1026,7 @@ function taskStats(list){
   const groups=[...PRIOS,""].map(by).filter(g=>g.total);
   return {total:list.length,done:list.filter(t=>t.done).length,groups,core:by("핵심")};
 }
-function TaskDashboard({tasks,big=[],loading,today,curMon}){
+function TaskDashboard({tasks,big=[],loading,today,curMon,noHistory}){
   if(loading) return <SkeletonList card rows={4}/>;
   const monISO=toISO(curMon), friISO=toISO(addDays(curMon,6));
   const week=tasks.filter(t=>t.date>=monISO&&t.date<=friISO);
@@ -1026,7 +1077,7 @@ function TaskDashboard({tasks,big=[],loading,today,curMon}){
         </div>
       </section>}
 
-    <section className="group">
+    {!noHistory&&<section className="group">
       <div className="group-head small"><h2>최근 4주</h2></div>
       <div className="cells">
         {weeks.map(w=>{const wk=weekOfMonth(w.a),c=w.st.core,ok=c.total>0&&c.done===c.total;return(
@@ -1038,8 +1089,136 @@ function TaskDashboard({tasks,big=[],loading,today,curMon}){
             {c.total>0&&<span className={"cell-value num frog-count"+(ok?" met":"")} aria-label={`개구리 ${c.total}개 중 ${c.done}개`}><Frog eaten={ok} size={16}/>{c.done}/{c.total}</span>}
           </div></div>);})}
       </div>
-    </section>
+    </section>}
   </>);
+}
+
+/* ── 주간 회고 쓰기 — 항목(성과·시간 관리·업무량·멘탈·체력)마다 별점 + 메모, 그 외, 다음 주에 해볼 것.
+   맨 위 참고 타일을 누르면 쓰던 화면을 떠나지 않고 그 주 기록을 모달로 봄 ── */
+const REF_TABS=[["frog","개구리"],["done","한 일"],["routine","루틴"],["rating","평점"],["lesson","레슨런"]];
+const emptyWeekly=()=>({scores:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,null])),notes:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,""])),other:"",next:""});
+function WeeklyRetro({mon,saved,loading,draft,setDraft,refData,mode,today,allTasks,onClose,onSave}){
+  const [ref,setRef]=useState(null);
+  const [busy,setBusy]=useState(false);
+  /* 뒤에 깔린 화면까지 닫히지 않도록 먼저 받아서 멈춤 — 참고 모달이 열려 있으면 모달이 먼저 받음 */
+  useEffect(()=>{const esc=(e)=>{if(e.key==="Escape"&&!ref){e.stopPropagation();onClose();}};document.addEventListener("keydown",esc,true);return()=>document.removeEventListener("keydown",esc,true);},[onClose,ref]);
+  const base=emptyWeekly();
+  const src=draft||saved||base;
+  const form={scores:{...base.scores,...(src.scores||{})},notes:{...base.notes,...(src.notes||{})},other:src.other||"",next:src.next||""};
+  const put=(v)=>setDraft({...form,...v});
+  const filled=WEEKLY_ITEMS.some(k=>form.scores[k]||form.notes[k].trim())||form.other.trim()||form.next.trim();
+  const save=async()=>{if(!filled||busy)return;setBusy(true);
+    try{await onSave({scores:form.scores,notes:Object.fromEntries(WEEKLY_ITEMS.map(k=>[k,form.notes[k].trim()])),other:form.other.trim(),next:form.next.trim()});}
+    catch(e){}finally{setBusy(false);}};
+  const d0=fromISO(mon), d6=addDays(d0,6);
+  const range=`${d0.getMonth()+1}월 ${d0.getDate()}일 ~ ${d6.getMonth()!==d0.getMonth()?`${d6.getMonth()+1}월 `:""}${d6.getDate()}일`;
+  const R=refData;
+  const tiles=[
+    ["frog","개구리","frog","var(--green)",R.core.total?`${R.core.done}/${R.core.total}`:"없음"],
+    ["done","한 일","done","var(--green)",`${R.done.length}`],
+    ["routine","루틴","check","var(--blue)",`${R.checks}회`],
+    ["rating","평점","star","var(--orange)",R.ratingAvg==null?"없음":R.ratingAvg.toFixed(1)],
+    ["lesson","레슨런","bulb","var(--purple)",`${R.lessons.length}`],
+  ];
+  const card=(k,label,withStars)=>(
+    <section key={k} className="lcard" aria-label={label}>
+      <div className="lfield">
+        <div className="lfield-head">
+          <span className="lfield-label">{label}</span>
+          {withStars&&<span role="radiogroup" aria-label={`${label} 점수`} className="wr-stars">
+            {[1,2,3,4,5].map(n=>(
+              <button key={n} role="radio" aria-checked={form.scores[k]===n} aria-label={`${n}점`} className={"btn star"+(n<=(form.scores[k]||0)?" on":"")}
+                onClick={()=>put({scores:{...form.scores,[k]:form.scores[k]===n?null:n}})}><StarSvg size={22}/></button>))}
+          </span>}
+        </div>
+        <RichField multiline value={withStars?form.notes[k]:form[k]} label={label}
+          onChange={v=>withStars?put({notes:{...form.notes,[k]:v.slice(0,1000)}}):put({[k]:v.slice(0,1000)})}/>
+      </div>
+    </section>);
+  return(
+    <div role="dialog" aria-modal="true" aria-label={`${R.label} 회고`} className="sheet push" style={{zIndex:85,overflowY:ref?"hidden":undefined}}>
+      <header className="navbar scrolled">
+        <div className="navbar-in">
+          <button className="btn glass-ico" onClick={onClose} aria-label="회고로 돌아가기"><Chevron dir="l" size={20}/></button>
+          <span className="nav-title">{R.label} 회고</span>
+          <button className="btn txt strong" style={{justifySelf:"end"}} disabled={!filled||busy||loading} onClick={save}>{busy?"저장 중":"저장"}</button>
+        </div>
+      </header>
+      <div className="wrap" style={{paddingTop:4}}>
+        <p className="subtitle" style={{margin:"0 4px 4px"}}>{range}</p>
+        {/* 참고 — 이번 주 기록. 누르면 모달로 (쓰던 내용은 그대로) */}
+        <div className="ref-row" role="group" aria-label="이번 주 기록 참고">
+          {tiles.map(([id,name,ic,color,val])=>(
+            <button key={id} className="btn ref-tile" onClick={()=>setRef(id)} aria-label={`${name} ${val} 참고하기`}>
+              <span className="ref-k">{name}</span>
+              <span className="ref-v num"><span style={{color,display:"flex"}}><Icon name={ic} size={14}/></span>{val}</span>
+            </button>))}
+        </div>
+        {loading
+          ? <div aria-busy="true">{WEEKLY_ITEMS.map(k=><div key={k} className="lcard" style={{padding:"14px 18px"}}><div className="sk" style={{height:13,width:60}}/><div className="sk" style={{height:16,width:"70%",marginTop:12}}/></div>)}</div>
+          : <>
+              {WEEKLY_ITEMS.map(k=>card(k,k,true))}
+              {card("other","그 외",false)}
+              {card("next","다음 주에 해볼 것",false)}
+            </>}
+      </div>
+      {ref&&<RefSheet tab={ref} setTab={setRef} onClose={()=>setRef(null)} R={R} mode={mode} today={today} allTasks={allTasks}/>}
+    </div>
+  );
+}
+
+/* 참고 모달 — 회고 쓰기 위에 바텀 시트로. 맨 위 세그먼트로 다른 기록으로 넘김. 바깥·✕·Esc·아래로 끌기로 닫음 */
+function RefSheet({tab,setTab,onClose,R,mode,today,allTasks}){
+  const panel=useRef(null), drag=useRef(null);
+  useEffect(()=>{const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};document.addEventListener("keydown",esc,true);return()=>document.removeEventListener("keydown",esc,true);},[onClose]);
+  const onStart=(e)=>{drag.current={y:e.touches[0].clientY,dy:0};};
+  const onMove=(e)=>{if(!drag.current)return;const dy=Math.max(0,e.touches[0].clientY-drag.current.y);drag.current.dy=dy;if(panel.current)panel.current.style.transform=`translateY(${dy}px)`;};
+  const onEnd=()=>{const dy=drag.current?.dy||0;drag.current=null;if(dy>90)onClose();else if(panel.current)panel.current.style.transform="";};
+  const title=REF_TABS.find(t=>t[0]===tab)?.[1]||"";
+  const dLabel=(iso)=>{const x=fromISO(iso);return iso===today?"오늘":`${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
+  let body=null;
+  if(tab==="frog") body=<TaskDashboard tasks={allTasks} big={R.big} today={today} curMon={fromISO(R.mon)} noHistory/>;
+  if(tab==="done") body=<WorkLog items={R.done} mode={mode} today={today} label={R.label}/>;
+  if(tab==="routine") body=R.routines.length
+    ? <section className="group" style={{marginTop:12}}><div className="cells">
+        {R.routines.map(r=>(
+          <div key={r.id} className="cell"><div className="cell-body">
+            <div className="cell-main"><div className="cell-title">{r.name}</div><div className="cell-sub">지난주 {r.pc}회</div></div>
+            <span className={"cell-value num"+(r.c>=r.t?" met":"")}>{Math.min(r.c,r.t)}/{r.t}</span>
+          </div></div>))}
+      </div></section>
+    : <p className="group-foot" style={{marginTop:20}}>루틴이 없어요</p>;
+  if(tab==="rating") body=<>
+      <div className="card" style={{marginTop:12}}>
+        <div className="card-head" style={{color:"var(--orange)"}}><Icon name="star" size={16}/>평균</div>
+        <div className="value"><span className="num">{R.ratingAvg==null?"없어요":R.ratingAvg.toFixed(1)}</span>{R.ratingAvg!=null&&<small>점</small>}</div>
+      </div>
+      <section className="group"><div className="cells">
+        {R.ratingDays.filter(x=>x.d<=today).reverse().map(x=>(
+          <div key={x.d} className="cell"><div className="cell-body">
+            <span className="cell-title">{dLabel(x.d)}</span>
+            {x.v?<Stars n={x.v} size={13}/>:<span className="cell-value">—</span>}
+          </div></div>))}
+      </div></section></>;
+  if(tab==="lesson") body=<LessonsList lessons={R.lessons} today={today} readOnly/>;
+  return(
+    <div className="ref-back" onClick={onClose}>
+      <div ref={panel} role="dialog" aria-modal="true" aria-label={`${title} 참고`} className="ref-sheet" onClick={e=>e.stopPropagation()}>
+        <div className="ref-head" onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}>
+          <span className="ref-grip" aria-hidden="true"/>
+          <div className="ref-head-row">
+            <div className="seg" role="tablist" aria-label="참고할 기록">
+              {REF_TABS.map(([id,name])=>(
+                <button key={id} role="tab" aria-selected={tab===id} className={"btn seg-b"+(tab===id?" on":"")} onClick={()=>setTab(id)}>{name}</button>))}
+            </div>
+            <button className="btn ref-x" onClick={onClose} aria-label="닫기">
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg></button>
+          </div>
+        </div>
+        <div className="ref-body">{body}</div>
+      </div>
+    </div>
+  );
 }
 
 /* ── 이번 주 한 일 — 끝낸 과업을 프로젝트·과제별로 묶어 보여 줌 (주간 회고 때 무엇을 어떻게 진행했는지)
@@ -1143,6 +1322,7 @@ function Icon({name,size=22}){
   if(name==="chart") return <svg {...p}><path d="M5 20V12M10 20V5M15 20v-9M20 20V8"/></svg>;
   if(name==="flame") return <svg {...p}><path d="M12 21c3.9 0 6.5-2.7 6.5-6.4 0-3.3-2.3-5.6-3.8-7.6-.4 1.9-1.5 3-2.7 3.5.2-2.8-1-5.4-3.4-7.5-.3 3.5-4.1 6.2-4.1 11.6C4.5 18.3 7.6 21 12 21z"/></svg>;
   if(name==="done") return <svg {...p}><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3 10.8 15l5-5.6"/></svg>;
+  if(name==="pencil") return <svg {...p}><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>;
   if(name==="flag") return <svg {...p}><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>;
   if(name==="frog") return <svg {...p}><path d="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z"/><path d="M9 15c1.8 1 4.2 1 6 0"/></svg>;
   if(name==="star") return <svg {...p} fill="currentColor" stroke="none"><path d={STAR}/></svg>;
@@ -1811,7 +1991,7 @@ function htmlToMd(root){
   root.childNodes.forEach(c=>walk(c,false));
   return out.replace(/\*\*\*\*/g,"").replace(/\n+$/,"");
 }
-const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnter,placeholder,label},ref){
+const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnter,placeholder,label,multiline},ref){
   const el=useRef(null), last=useRef(null);
   React.useImperativeHandle(ref,()=>({focus:()=>{const d=el.current;if(!d)return;d.focus();
     const r=document.createRange();r.selectNodeContents(d);r.collapse(false);const s=window.getSelection();s.removeAllRanges();s.addRange(r);},
@@ -1827,7 +2007,8 @@ const RichField=React.forwardRef(function RichField({value,onChange,onBlur,onEnt
       if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();document.execCommand("bold");sync();return;}
       if((e.metaKey||e.ctrlKey)&&/^[iu]$/i.test(e.key)){e.preventDefault();return;}   // 기울임·밑줄은 쓰지 않음
       if(e.key==="Enter"&&!e.nativeEvent.isComposing){e.preventDefault();
-        if(e.shiftKey){document.execCommand("insertLineBreak");sync();}else onEnter?.();}
+        /* multiline: 엔터도 줄바꿈 (주간 회고 메모) */
+        if(e.shiftKey||multiline){document.execCommand("insertLineBreak");sync();}else onEnter?.();}
     }}/>;
 });
 
@@ -1965,19 +2146,23 @@ function WeeklyReport({mon,label,lessons,big=[],core,routines=[],coreByDay={},mo
 }
 
 /* ── 레슨런 목록 ── 날짜별로 묶고(날짜는 그룹 머리에 한 번), 줄 = 상황/문제 + 해볼 것 한 줄. 누르면 편집 시트 */
-function LessonsList({lessons,today,onOpen}){
+/* 레슨런 줄 — 읽기 전용(참고 모달)에선 누를 수 없는 줄로 */
+const LessonRow=({readOnly,onClick,children})=>readOnly
+  ? <div className="cell" style={{alignItems:"flex-start"}}>{children}</div>
+  : <button className="btn cell tap" style={{alignItems:"flex-start"}} onClick={onClick}>{children}</button>;
+function LessonsList({lessons,today,onOpen,readOnly}){
   const groups=[];
   for(const l of [...lessons].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)){
     let g=groups[groups.length-1]; if(!g||g.date!==l.date){g={date:l.date,items:[]};groups.push(g);} g.items.push(l);
   }
-  if(!groups.length) return <p className="group-foot" style={{marginTop:20}}>아직 레슨런이 없어요. 오른쪽 위 +로 남길 수 있어요.</p>;
+  if(!groups.length) return <p className="group-foot" style={{marginTop:20}}>{readOnly?"이번 주 레슨런이 없어요":"아직 레슨런이 없어요. 오른쪽 위 +로 남길 수 있어요."}</p>;
   const label=(iso)=>{const x=fromISO(iso);return `${iso===today?"오늘 · ":""}${x.getMonth()+1}월 ${x.getDate()}일 ${wdOf(iso)}요일`;};
   return groups.map(g=>(
     <section key={g.date} className="group">
       <div className="group-head small"><h2>{label(g.date)}</h2></div>
       <div className="cells">
         {g.items.map(l=>(
-          <button key={l.id} className="btn cell tap" style={{alignItems:"flex-start"}} onClick={()=>onOpen(l)}>
+          <LessonRow key={l.id} readOnly={readOnly} onClick={()=>onOpen?.(l)}>
             <div className="cell-body" style={{alignItems:"flex-start",padding:"12px 16px 12px 0"}}>
               <div className="cell-main">
                 {/* 해볼 것이 레슨런의 핵심 — 상자로 강조하고, 상황/문제는 그 위에 보조 글자로. '해볼 것' 글자 대신 ↳ 표시 */}
@@ -1986,9 +2171,9 @@ function LessonsList({lessons,today,onOpen}){
                   <svg className="ltry-ico" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 2v4.5A2.5 2.5 0 0 0 5.5 9H11M8.5 6.5 11 9l-2.5 2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   <div style={{minWidth:0,flex:1}}><span className="sr-only">해볼 것: </span><Lines text={l.try}/></div></div>}
               </div>
-              <span className="disclosure" style={{marginTop:2}}><Chevron size={14}/></span>
+              {!readOnly&&<span className="disclosure" style={{marginTop:2}}><Chevron size={14}/></span>}
             </div>
-          </button>))}
+          </LessonRow>))}
       </div>
     </section>));
 }
@@ -2305,6 +2490,27 @@ const CSS=`
   .fade{animation:fade .2s ease}
   @keyframes fade{from{opacity:0}to{opacity:1}}
   .sheet.push{animation:push .28s cubic-bezier(.2,.8,.2,1)}
+  /* 주간 회고 — 맨 위 참고 타일(가로로), 항목 카드 머리의 별, 참고 모달(바텀 시트 + 세그먼트) */
+  .ref-row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:10px -16px 0;padding:0 16px 2px}
+  .ref-row::-webkit-scrollbar{display:none}
+  .btn.ref-tile{flex:1 1 0;min-width:60px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 9px 10px 11px;border-radius:18px;background:var(--cell);text-align:left}
+  .btn.ref-tile:active{opacity:.6}
+  .ref-k{font-size:12px;font-weight:500;color:var(--label2);white-space:nowrap}
+  .ref-v{display:flex;align-items:center;gap:3px;font-size:17px;font-weight:600;color:var(--label);white-space:nowrap}
+  .wr-stars{display:flex;gap:0;margin:-6px -4px -6px 0}
+  .ref-back{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.32);display:flex;align-items:flex-end;justify-content:center;animation:fade .2s}
+  .ref-sheet{width:100%;max-width:600px;height:76vh;height:76dvh;background:var(--bg);border-radius:26px 26px 0 0;display:flex;flex-direction:column;
+    box-shadow:0 -4px 24px rgba(0,0,0,.12),inset 0 .5px 0 var(--sep);animation:ref-up .3s cubic-bezier(.2,.8,.2,1);transition:transform .2s}
+  @keyframes ref-up{from{transform:translateY(100%)}}
+  .ref-head{padding:6px 16px 8px;touch-action:none}
+  .ref-grip{display:block;width:36px;height:5px;border-radius:3px;background:var(--gray3);margin:0 auto 10px}
+  .ref-head-row{display:flex;align-items:center;gap:10px}
+  .seg{flex:1;display:flex;background:var(--fill);border-radius:10px;padding:2px;min-width:0}
+  .btn.seg-b{flex:1;min-width:0;height:30px;border-radius:8px;font-size:13px;font-weight:500;color:var(--label);white-space:nowrap}
+  .btn.seg-b.on{background:var(--cell);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .btn.ref-x{flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:var(--fill);color:var(--label2);display:flex;align-items:center;justify-content:center}
+  .ref-body{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 16px calc(24px + env(safe-area-inset-bottom))}
+  @media(prefers-reduced-motion:reduce){.ref-back,.ref-sheet{animation:none}}
   @keyframes push{from{transform:translateX(24%);opacity:.6}}
   @media(prefers-reduced-motion:reduce){.sheet.push{animation:none}.fade,.sk,.cbox.on svg,.frog-pop,.rp,.rp-bg,.rp-in,.rp-bars>span.on::after{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
 `;
