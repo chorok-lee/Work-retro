@@ -711,6 +711,7 @@ export default function App(){
     const coreByDay={}; ds.forEach(d=>{const c=allTasks.filter(t=>t.date===d&&t.priority==="핵심");if(c.length)coreByDay[d]={done:c.filter(t=>t.done).length,total:c.length};});
     return {mon,label:`${wk.m}월 ${wk.w}주차`,lessons:ls,big:bigOfWeek(mon),core,routines,coreByDay};
   };
+  const lastMon=toISO(addDays(curMon,-7));
   /* 주간 회고 — 쓰는 주는 주간 리포트와 같음(금~일 이번 주, 월~목 지난주). 노션 '주간 회고' DB에 한 주 한 행 */
   const [weekly,setWeekly]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly")||"{}")||{};}catch{return {};}});   // { 월요일: retro }
   const [weeklyLoading,setWeeklyLoading]=useState(false);
@@ -718,10 +719,15 @@ export default function App(){
   useEffect(()=>{
     if(!isNotion) return;
     let alive=true; setWeeklyLoading(true);
-    api(`/api/weekly?week=${reportMon}`).then(r=>{if(alive)setWeekly(p=>{const o={...p};if(r.retro)o[reportMon]=r.retro;else delete o[reportMon];return o;});},()=>{})
+    const got=(mon)=>(r)=>{if(alive)setWeekly(p=>{const o={...p};if(r.retro)o[mon]=r.retro;else delete o[mon];return o;});};
+    api(`/api/weekly?week=${reportMon}`).then(got(reportMon),()=>{})
       .finally(()=>{if(alive)setWeeklyLoading(false);});
+    /* 지난주 회고의 '다음 주에 해볼 것' — 오늘 탭 맨 아래 '지난주의 내가 보낸 메시지' (금~일엔 쓰는 주와 다름) */
+    if(lastMon!==reportMon) api(`/api/weekly?week=${lastMon}`).then(got(lastMon),()=>{});
     return()=>{alive=false;};
-  },[isNotion,reportMon]);
+  },[isNotion,reportMon,lastMon]);
+  const [msgOpen,setMsgOpen]=useState(false);
+  const lastMsg=(weekly[lastMon]?.next||"").trim();
   const [weeklyDrafts,setWeeklyDrafts]=useState(()=>{try{return JSON.parse(LS.get("wr_weekly_drafts")||"{}")||{};}catch{return {};}});
   useEffect(()=>{LS.set("wr_weekly_drafts",JSON.stringify(weeklyDrafts));},[weeklyDrafts]);
   const saveWeekly=async(mon,form)=>{
@@ -823,6 +829,10 @@ export default function App(){
               </section>}
 
             {!evening&&<div style={{marginTop:26}}>{ratingCard}</div>}
+            {/* 지난주 회고에 적은 '다음 주에 해볼 것' — 맨 아래 작은 버튼, 누르면 메시지 */}
+            {lastMsg&&<div className="msg-entry-wrap">
+              <button className="btn msg-entry" onClick={()=>setMsgOpen(true)}>
+                <Icon name="mail" size={15}/>지난주의 내가 보낸 메시지</button></div>}
           </div>
         )}
 
@@ -919,6 +929,7 @@ export default function App(){
       {editingLesson&&<LessonEditSheet lesson={editingLesson} suggest={suggestTries} onClose={()=>setEditingLesson(null)} onAdd={addLessons}
         onSave={async(text,tryText)=>{await editLesson(editingLesson.id,text,tryText);setEditingLesson(null);}}
         onDelete={()=>{delLesson(editingLesson.id);setEditingLesson(null);setToast("레슨런을 삭제했어요");}}/>}
+      {msgOpen&&lastMsg&&<MessageSheet from={weekReportData(lastMon).label} text={lastMsg} onClose={()=>setMsgOpen(false)}/>}
       {toast&&<div className="toast fade" role="status">{toast}</div>}
     </div>
   );
@@ -1167,6 +1178,24 @@ function WeeklyRetro({mon,saved,loading,draft,setDraft,refData,mode,today,allTas
   );
 }
 
+/* 지난주의 내가 보낸 메시지 — 지난주 회고의 '다음 주에 해볼 것'을 편지처럼. 바깥·✕·Esc로 닫음 */
+function MessageSheet({from,text,onClose}){
+  useEffect(()=>{const esc=(e)=>{if(e.key==="Escape"){e.stopPropagation();onClose();}};document.addEventListener("keydown",esc,true);return()=>document.removeEventListener("keydown",esc,true);},[onClose]);
+  return(
+    <div className="ref-back" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label="지난주의 내가 보낸 메시지" className="ref-sheet msg-sheet" onClick={e=>e.stopPropagation()}>
+        <div className="msg-head">
+          <span className="msg-k"><Icon name="mail" size={16}/>{from}의 내가</span>
+          <button className="btn ref-x" onClick={onClose} aria-label="닫기">
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg></button>
+        </div>
+        <h2 className="msg-title">이번 주엔 이렇게 해 보자</h2>
+        <div className="msg-body"><Lines text={text}/></div>
+      </div>
+    </div>
+  );
+}
+
 /* 참고 모달 — 회고 쓰기 위에 바텀 시트로. 맨 위 세그먼트로 다른 기록으로 넘김. 바깥·✕·Esc·아래로 끌기로 닫음 */
 function RefSheet({tab,setTab,onClose,R,mode,today,allTasks}){
   const panel=useRef(null), drag=useRef(null);
@@ -1322,6 +1351,7 @@ function Icon({name,size=22}){
   if(name==="chart") return <svg {...p}><path d="M5 20V12M10 20V5M15 20v-9M20 20V8"/></svg>;
   if(name==="flame") return <svg {...p}><path d="M12 21c3.9 0 6.5-2.7 6.5-6.4 0-3.3-2.3-5.6-3.8-7.6-.4 1.9-1.5 3-2.7 3.5.2-2.8-1-5.4-3.4-7.5-.3 3.5-4.1 6.2-4.1 11.6C4.5 18.3 7.6 21 12 21z"/></svg>;
   if(name==="done") return <svg {...p}><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3 10.8 15l5-5.6"/></svg>;
+  if(name==="mail") return <svg {...p}><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="m4.5 7 7.5 6 7.5-6"/></svg>;
   if(name==="pencil") return <svg {...p}><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>;
   if(name==="flag") return <svg {...p}><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>;
   if(name==="frog") return <svg {...p}><path d="M7.6 4.6a2.9 2.9 0 0 1 2.7 1.9h3.4a2.9 2.9 0 1 1 4.6 3.1c1.6 1.2 2.6 2.9 2.6 4.8 0 3.4-3.7 5.4-8.9 5.4s-8.9-2-8.9-5.4c0-1.9 1-3.6 2.6-4.8a2.9 2.9 0 0 1 1.9-5z"/><path d="M9 15c1.8 1 4.2 1 6 0"/></svg>;
@@ -2511,6 +2541,15 @@ const CSS=`
   .btn.ref-x{flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:var(--fill);color:var(--label2);display:flex;align-items:center;justify-content:center}
   .ref-body{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 16px calc(24px + env(safe-area-inset-bottom))}
   @media(prefers-reduced-motion:reduce){.ref-back,.ref-sheet{animation:none}}
+  /* 지난주의 내가 보낸 메시지 — 오늘 탭 맨 아래 작은 버튼 + 높이가 내용만큼인 바텀 시트 */
+  .msg-entry-wrap{display:flex;justify-content:center;margin-top:28px}
+  .btn.msg-entry{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;border-radius:16px;background:var(--fill2);color:var(--label2);font-size:13px;font-weight:500}
+  .btn.msg-entry:active{opacity:.6}
+  .ref-sheet.msg-sheet{height:auto;max-height:76vh;max-height:76dvh;padding:16px 20px calc(28px + env(safe-area-inset-bottom));overflow-y:auto}
+  .msg-head{display:flex;justify-content:space-between;align-items:center}
+  .msg-k{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--purple)}
+  .msg-title{font-size:22px;font-weight:700;margin:10px 0 0}
+  .msg-body{margin-top:12px;font-size:17px;line-height:1.5;background:var(--cell);border-radius:18px;padding:14px 16px}
   @keyframes push{from{transform:translateX(24%);opacity:.6}}
   @media(prefers-reduced-motion:reduce){.sheet.push{animation:none}.fade,.sk,.cbox.on svg,.frog-pop,.rp,.rp-bg,.rp-in,.rp-bars>span.on::after{animation:none}.navbar,.nav-title,.disclosure{transition:none}}
 `;
