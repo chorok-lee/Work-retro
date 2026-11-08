@@ -1,4 +1,5 @@
 /* /api/weekly — 주간 회고 (한 주에 한 행)
+   GET                           →  { retros: [retro…] }   (최근 주가 위, 최대 100개)
    GET ?week=YYYY-MM-DD(월요일)  →  { retro: { id, week, scores: {성과: 4, …}, notes: {성과: "…", …}, other, next } | null }
    PUT { week, scores, notes, other, next }  →  { retro }   (그 주 행이 있으면 고치고 없으면 만듦)
 
@@ -82,6 +83,11 @@ export default async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store");
     if (req.method === "GET") {
       const week = String(req.query?.week || "");
+      /* week 없이 부르면 모든 주간 회고 — 최근 주가 위로 (회고 탭 목록) */
+      if (!week) {
+        const rows = await queryAll(W.id, { sorts: [{ property: W.pWeek, direction: "descending" }] });
+        return res.status(200).json({ retros: rows.map(toRetro(W)).filter((r) => isDate(r.week)).slice(0, 100) });
+      }
       if (!isDate(week)) return res.status(400).json({ error: "week(YYYY-MM-DD, 월요일)가 필요합니다." });
       const page = await findWeek(W, week);
       return res.status(200).json({ retro: page ? toRetro(W)(page) : null });
