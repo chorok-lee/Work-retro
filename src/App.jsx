@@ -2577,8 +2577,11 @@ const CSS=`
   .pbar{flex:1;height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:0 4px}
   .pbar>span{display:block;height:100%;border-radius:3px;background:var(--blue)}
   .pbar>span.full{background:var(--green)}
-  .ta.rich{outline:none;white-space:pre-wrap;word-break:break-word;cursor:text;-webkit-user-modify:read-write}
-  .ta.rich[data-empty]::before{content:attr(data-placeholder);color:var(--label3);pointer-events:none}
+  .ta.rich{position:relative;outline:none;white-space:pre-wrap;word-break:break-word;cursor:text;-webkit-user-modify:read-write}
+  /* 플레이스홀더는 글 흐름 밖에 겹쳐 그림 — 줄 안에 자리를 차지하면 빈 칸을 눌렀을 때 커서가 플레이스홀더 끝에 놓였다가
+     첫 글자를 치는 순간 맨 앞으로 튐(한글 조합 중 버벅임) */
+  .ta.rich[data-empty]::before{content:attr(data-placeholder);color:var(--label3);pointer-events:none;
+    position:absolute;left:0;top:0;right:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ta.rich b,.ta.rich strong,.lprob strong,.ltry strong{font-weight:700}
   .lcard{background:var(--cell);border-radius:26px;margin-top:12px;overflow:hidden}
   .lfield{padding:11px 18px 12px}
